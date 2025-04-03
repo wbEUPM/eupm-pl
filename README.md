@@ -18,7 +18,7 @@ appear in the GitHub history to preserve privacy.
 .
 ├── 00-master.R                   - Executes all code
 ├── 05-geometries.qmd             - Documentation of the geometries preparation
-├── 10-SILK-variables.R           - Prepared variables based on the SILK data
+├── 10-SILC-variables.R           - Prepared variables based on the SILC data
 ├── 20-other-variables.qmd        - Collection and normalization of other variables
 ├── 30-data-mege.qmd              - Selecting relevant variables and merging data
 ├── 40-________.qmd               - Analysis steps
@@ -29,7 +29,7 @@ appear in the GitHub history to preserve privacy.
 │   │   ├── ntl                   - Night time light data
 │   │   ├── geometries            - Geometrical boundaries at different levels
 │   │   ├── pl-metadata.xlsx      - Metadata for area-level data
-│   │   └── silk-sample           - Sample/dummy data for setting up the SILK code
+│   │   └── silk-sample           - Sample/dummy data for setting up the SILC code
 │   └── temp                      - Temporary processed raw data
 ├── R                             - Custom R functions used in the analysis
 ├── reports                       - Generated reports

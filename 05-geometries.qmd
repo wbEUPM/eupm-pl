@@ -113,6 +113,10 @@ Administrative boundaries for Poland changed over time. Data for 2010-2023 has t
 #| label: dta-geom
 root_raw |> file.path("geometries", "bdl.maps.2023.RData") |> load()
 
+root_raw |> file.path("geometries", "bdl.maps.2019.RData") |> load()
+
+root_raw |> file.path("geometries", "bdl.maps.2011.RData") |> load()
+
 bdl.maps.2023$level0 <- bdl.maps.2023$level1 |> summarise() |> 
   mutate(id = "000000000000", name = "POLAND")
 bdl.maps.2023 <- bdl.maps.2023[order(names(bdl.maps.2023))]
@@ -128,8 +132,8 @@ geoms <- bd_aux |> pin_read("geometries")
 
 ```{r eval=TRUE}
 #| label: fig-pl-geom
-#| fig-width: 8
-#| fig-height: 5
+#| fig-width: 14
+#| fig-height: 6.5
 #| fig-dpi: 300 
 #| fig-cap: Admin division of Poland
 pl_geom_1 <- 
@@ -153,5 +157,62 @@ pl_geom_2 <-
 pl_geom <- pl_geom_1 + pl_geom_2 + patchwork::plot_layout(guides = "collect")
 pl_geom
 ```
+
+# Boundaries change over time
+
+Generally, geographic boundaries appear consistent between 2011 and 2019, however, there are two LAU1 regions in 2019, which are not in 2011.  @fig-pl-geom-2 shows all the cahnges in the adminsitrative division between 2011 and 2019.
+
+```{r eval=TRUE}
+#| label: fig-pl-geom-2
+#| fig-width: 14
+#| fig-height: 6.5
+#| fig-dpi: 150 
+#| fig-cap: Changes in admin division between 2011 and 2019
+root_raw |> file.path("geometries", "bdl.maps.2023.RData") |> load()
+root_raw |> file.path("geometries", "bdl.maps.2019.RData") |> load()
+root_raw |> file.path("geometries", "bdl.maps.2011.RData") |> load()
+
+library(patchwork)
+names(bdl.maps.2011)[4:6] |> 
+  map(~{
+    # browser()
+    level_name <- 
+      case_when(
+        .x == "level1" ~ "NUTS 1",
+        .x == "level2" ~ "Regions",
+        .x == "level3" ~ "NUTS 2",
+        .x == "level4" ~ "NUTS 3",
+        .x == "level5" ~ "LAU 1",
+        .x == "level6" ~ "LAU 2"
+      )
+    
+    plt_2011 <- 
+      bdl.maps.2011[[.x]] |> group_by(id) |> filter(row_number() == 1) |> ungroup() |> 
+      mutate(in_2019 = ifelse(id %in% bdl.maps.2019[[.x]]$id, "in 2019", "not in 2019")) |> 
+      ggplot() + 
+      geom_sf(aes(fill = in_2019), alpha = 0.6) + 
+      theme_bw() + 
+      ggtitle(str_c("2011:", level_name))
+    
+    
+    plt_2019 <-
+      bdl.maps.2019[[.x]] |> group_by(id) |> filter(row_number() == 1) |> ungroup() |>
+      mutate(in_2011 = ifelse(id %in% bdl.maps.2011[[.x]]$id, "in 2011", "not in 2011")) |>
+      ggplot() +
+      geom_sf(aes(fill = in_2011), alpha = 0.6) +
+      # scale_fill_manual(NULL) |>
+      theme_bw() +
+      ggtitle(str_c("2019:", level_name))
+    
+    list(plt_2011, plt_2019)
+  }) |> 
+  transpose() |> 
+  map(~{
+    .x |> reduce(~.x + .y)
+  }) |> 
+  reduce(~.x / .y)
+
+```
+
 
 
