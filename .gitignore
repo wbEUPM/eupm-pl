@@ -10,3 +10,6 @@
 *.parquet
 
 data/
+/.quarto/
+/reports/*.html
+/reports/*_files/

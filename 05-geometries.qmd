@@ -1,0 +1,160 @@
+---
+title: "Geometries preparation"
+# author: "Eduard Bukin" 
+format: html
+editor: source
+params:
+  eval_all: FALSE
+  harvest: FALSE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=FALSE}
+# Recollect data from the sources?
+if ("try-error" %in% class(try(params$eval_all)))
+  params <- list(eval_all = FALSE, harvest = FALSE)
+```
+
+```{r}
+#| label: setup
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+
+# Libraries
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(pins)
+library(readxl)
+library(arrow)
+library(glue)
+library(stringr)
+library(forcats)
+
+library(ggplot2)
+library(scales)
+library(patchwork)
+
+library(sf)
+library(mapview)
+library(flextable)
+library(ftExtra)
+library(knitr)
+library(htmltools)
+
+# Poland's database API
+library(bdl)
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
+
+# Loading locally-developed
+list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
+  walk(source)
+
+# Raw data root
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+
+# 
+# bd_geom <- file.path("data-clean", "geom") |> board_folder(versioned = T)
+
+# Years range
+range <- c(2011, 2019:2030)
+```
+
+# Geometries
+
+Source: [Latest release](https://github.com/statisticspoland/R_Package_to_API_BDL/releases/tag/1.0.5) of the `bdl` package.
+
+Administrative boundaries for Poland changed over time. Data for 2010-2023 has the same structure of encoding unique polygons, without duplicated polygoin IDs. Therefore, no spatial matching of polygons between years is needed. Each polygon is identified by its NUTS ID, which is also aliased with the 'TERY' is used in the national statistics reporting. NUTS ID consist of 11 symbols plus the 12th symbol distinguishes between the types of statistical units at the LAU2 level. 'TERY' ID consist of 7 digits. @tbl-pl-nutstery presents a correspondence betwqeen NUTS and TERY IDs. In detail this is explained on the website of the National Statistical Office (NSO) (<https://bdl.stat.gov.pl/bdl/metadane/teryt/kod>). Finally, @tbl-pl-lau2-types presents the different kind of statistical units at which data could be disseminated on different variables.
+
+| Level | NUTS/LAU code | TERY | Description | NUTS/LAU correspondence |
+|:--------------|:--------------|:--------------|:--------------|:--------------|
+| 1 | 00 |  | Macroregion (01,.., 07) | 1 = NUTS1 |
+| 2 | 00 | 00 | Voivodship (00, 02, ..., 32) |  |
+| 3 | 0 |  | Region (1,2) | 1 + 2 + 3 = NUTS 2 |
+| 4 | 00 |  | Subregion (00, 01, ..., 73) | 1 + 2 + 3 + 4 = NUTS 3 |
+| 5 | 00 | 00 | Powiat (00, 01, ..., 59 - powiats; 60, ..., 99 - cities with powiat status) | 2 + 5 = LAU1 |
+| 6 | 00 | 00 | Symbol of gmina/part of the gmina | 2 + 5 + 6 = LAU2 |
+| 7 |  | 0 | unit type |  |
+
+: LAU-NUTS vs TERYT correspondence {#tbl-pl-nutstery}
+
+| Unit code | Unit type                                          |
+|:----------|:---------------------------------------------------|
+| 1         | Urban gmina                                        |
+| 2         | Rural gmina                                        |
+| 3         | Urban-rural gmina                                  |
+| 4         | Town in urban-rural gmina                          |
+| 5         | Rural area in urban-rural gmina                    |
+| 8         | Districts of Capital City Warszawa                 |
+| 9         | Representations and quarters of other urban gminas |
+
+: LAU 2 units types {#tbl-pl-lau2-types}
+
+@fig-pl-geom displays the regional structure of Poland. Between years 2019 and 2023, we did not observe any changes in the administrative division of Poland at NUTS 1-3 and LAU 1 levels. Only at the level LAU2 there are 35 LAU2 gmina, which borders were revised. 
+
+```{r eval=params$eval_all}
+#| label: dta-geom
+root_raw |> file.path("geometries", "bdl.maps.2023.RData") |> load()
+
+bdl.maps.2023$level0 <- bdl.maps.2023$level1 |> summarise() |> 
+  mutate(id = "000000000000", name = "POLAND")
+bdl.maps.2023 <- bdl.maps.2023[order(names(bdl.maps.2023))]
+
+bd_aux |> pin_write(bdl.maps.2023, name = "geometries", type = "rds")
+rm(bdl.maps.2023)
+```
+
+```{r eval=TRUE}
+#| label: load-geom
+geoms <- bd_aux |> pin_read("geometries")
+```
+
+```{r eval=TRUE}
+#| label: fig-pl-geom
+#| fig-width: 8
+#| fig-height: 5
+#| fig-dpi: 300 
+#| fig-cap: Admin division of Poland
+pl_geom_1 <- 
+  ggplot() +
+  geom_sf(aes(colour = "4 NUTS 3 (73)"), geoms$level4, fill = NA, linewidth = 0.25) + 
+  geom_sf(aes(colour = "3 Region (17)"), geoms$level3, fill = NA, linewidth = 0.75) + 
+  geom_sf(aes(colour = "2 NUTS 2 (16)"), geoms$level2, fill = NA, linewidth = 1) + 
+  geom_sf(aes(colour = "1 NUTS 1 (7)"), geoms$level1, fill = NA, linewidth = 1.25) + 
+  scale_color_brewer("Division", palette = "Set1") + 
+  theme_bw() +
+  ggtitle("NUTS division")
+
+pl_geom_2 <- 
+  ggplot() +
+  geom_sf(aes(colour = "5 LAU 1 (380)"), geoms$level6, fill = NA, linewidth = 0.55) + 
+  geom_sf(aes(colour = "6 LAU 2 (2523)"), geoms$level5, fill = NA, linewidth = 1) +
+  scale_color_brewer(NULL, palette = "Set1") + 
+  theme_bw() +
+  ggtitle("LAU division")
+
+pl_geom <- pl_geom_1 + pl_geom_2 + patchwork::plot_layout(guides = "collect")
+pl_geom
+```
+
+```{r}
+
+```
+
