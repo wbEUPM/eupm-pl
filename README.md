@@ -12,10 +12,33 @@ Any data in the data folder and subfolders are ignored, therefore, will not
 appear in the GitHub history to preserve privacy.
 
 
+# Project structure
 
-# Structure
-
-
+```
+.
+├── 00-master.R                   - Executes all code
+├── 05-geometries.qmd             - Documentation of the geometries preparation
+├── 10-SILK-variables.R           - Prepared variables based on the SILK data
+├── 20-other-variables.qmd        - Collection and normalization of other variables
+├── 30-data-mege.qmd              - Selecting relevant variables and merging data
+├── 40-________.qmd               - Analysis steps
+├── data                          - data inventory
+│   ├── clean                     - Place for clean and processed data sets, e.g. poverty maps.
+│   ├── raw                       - Repository for saving raw data
+│   │   ├── api                   - Area level data downloaded from the NSO api
+│   │   ├── ntl                   - Night time light data
+│   │   ├── geometries            - Geometrical boundaries at different levels
+│   │   ├── pl-metadata.xlsx      - Metadata for area-level data
+│   │   └── silk-sample           - Sample/dummy data for setting up the SILK code
+│   └── temp                      - Temporary processed raw data
+├── R                             - Custom R functions used in the analysis
+├── reports                       - Generated reports
+│   ├── 05-area-geometries.html
+│   └── 20-area-level-variables.html
+├── eupm-pl.Rproj                 - RStudio project file
+├── README.md                     - Read me
+└── _quarto.yml
+```
 
 
 
