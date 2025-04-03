@@ -154,7 +154,4 @@ pl_geom <- pl_geom_1 + pl_geom_2 + patchwork::plot_layout(guides = "collect")
 pl_geom
 ```
 
-```{r}
-
-```
 
