@@ -170,4 +170,4 @@ write_csv(df_out, file.path(data_aux, "eu-silc.csv"))
 write.xlsx(df_out,
            file.path(data_aux, "EU_SILC_Indicators.xlsx"),
            sheetName = "R",
-           overwrite = F)
+           overwrite = TRUE)
