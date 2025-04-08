@@ -156,7 +156,7 @@ if (params$eval_all) {
 div(flextable_html_dependency())
 ```
 
-```{r results='asis', echo = FALSE}
+```{r calc-var-overview, results='asis', echo = FALSE}
 all_dta <- bd_aux |> pin_read(name = "all_dta")
 meta_categ <- 
   meta_groups |> 
@@ -177,7 +177,8 @@ range <-
     year_max = max(year) |> str_sub(3, 4)
   ) |>
   ungroup()  |>
-  pl_rename_levels(focus = 4:7) |>
+  filter(level %in% str_c("level", 4:7)) |> 
+  pl_rename_levels() |>
   mutate(range = str_c(year_min, ":", year_max)) |>
   select(-year_min, -year_max, -n) |>
   pivot_wider(names_from = level,

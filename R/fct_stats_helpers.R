@@ -248,7 +248,8 @@ plot_var <-
     geoms |>
       imap(~ tibble(level = .y, data = list(.x))) |>
       bind_rows() |>
-      pl_rename_levels(focus = focus) |>
+      filter(level  %in% str_c("level", focus)) |> 
+      pl_rename_levels() |>
       mutate(data = map2(level, data, ~ {
         .y |>
           left_join(dta, by = join_by(id)) |>
