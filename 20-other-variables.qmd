@@ -1,6 +1,5 @@
 ---
 title: "Area-level variables"
-# author: "Eduard Bukin" 
 format: 
   html:
     toc: true
@@ -120,8 +119,9 @@ if (params$harvest) {
 }
 ```
 
-```{r}
-if (params$harvest) {
+```{r eval=TRUE}
+#| label: raw-data-compilation
+if (params$eval_all) {
   all_dta <-
     bd_raw |> pin_list() |>
     map_dfr(~ {
@@ -168,17 +168,8 @@ meta_categ <-
   mutate(across(c(Category, id_indicator, Indicator, var_id, var_name),
                 ~ as_factor(.))) 
 range <-
-  all_dta |>  pl_decode_id() |>
-  mutate(
-    level = case_when(
-      id1_NUTS1 == "00" ~ "level0",
-      id2_NUTS2 == "00" ~ "level1",
-      id3_NUTS3 == "00" ~ "level3",
-      id4_LAU1 == "00" ~ "level4",
-      id5_LAU2 == "00" ~ "level5",
-      .default = "level6",
-    )
-  ) |>
+  all_dta |>  
+  pl_decode_id() |>
   group_by(var, level) |>
   summarise(
     n = sum(!is.na(val)) |> number(1, big.mark = ""),
@@ -335,7 +326,7 @@ pop <-
   filter(type_LAU %in% c("0", "1", "2", "3")) |>
   select(id, year, var, val)
 
-pop |> filter(year == 2023) |>  plot_var("ntl_mean_mask", geoms)
+pop |> filter(year == 2023) |>  plot_var("ntl_mean_mask", geoms = geoms, meta = meta_vars)
 ```
 
 ## Cell phone coverage
@@ -410,25 +401,4 @@ bd_raw |> pin_read("gsm")  |> pl_decode_id() |>
   filter(type_LAU %in% c("0", "1", "2", "3")) |>
   select(id, year, var, val) |>  plot_var("lte_n", geoms)
 ```
-
-
-
-
-
-
-
-```{r}
-# meta_vars |> 
-#   mutate(id_indicator = str_remove_all(id_indicator, "P")) |> 
-#   select(-Indicator) |> 
-#   left_join(meta_groups, by = join_by(id_indicator)) |> 
-#   filter(is.na(Catagory))
-#   count(Catagory )
-# meta_groups |> 
-#   count(id_indicator, sort = T)
-#   left_join()
-#   group_by(Catagory)
-
-```
-
 

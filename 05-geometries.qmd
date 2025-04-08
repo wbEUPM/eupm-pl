@@ -113,10 +113,6 @@ Administrative boundaries for Poland changed over time. Data for 2010-2023 has t
 #| label: dta-geom
 root_raw |> file.path("geometries", "bdl.maps.2023.RData") |> load()
 
-root_raw |> file.path("geometries", "bdl.maps.2019.RData") |> load()
-
-root_raw |> file.path("geometries", "bdl.maps.2011.RData") |> load()
-
 bdl.maps.2023$level0 <- bdl.maps.2023$level1 |> summarise() |> 
   mutate(id = "000000000000", name = "POLAND")
 bdl.maps.2023 <- bdl.maps.2023[order(names(bdl.maps.2023))]
