@@ -96,9 +96,9 @@ geoms <- bd_aux |> pin_read("geometries")
 
 ## Preparing poverty ralated variables (TBD)
 
-Here, poverty data should be loaded and visualized.
+Here, poverty/welfare data should be loaded and visualized.
 
-```{r}
+```{r dt-lfs-load}
 # TBD
 ```
 
@@ -114,7 +114,7 @@ To prepare the area-level variables, one needs to have normalized data, where al
 Please note that IDs should be unique across all regions and levels. Therefore, filtering data by NUTS3 or LAU1 IDs will be possible later based on the corresponding mapping tables.
 
 ```{r echo=TRUE}
-#| label: dta-example
+#| label: dta-rhs-load
 all_dta <- bd_aux |> pin_read(name = "all_dta")
 all_dta |> glimpse()
 ```
@@ -122,10 +122,14 @@ all_dta |> glimpse()
 The, one needs to select a list of variables, which should selected for the analysis and provide it as a vector. Make sure that all variables are well documented in the metadata.
 
 ```{r}
-var_focus <- c("gas_conn_resi", "foster_fam", "ntl_mean_mask",
-               "elec_cons_percap", "tax_deduct_num", "fam_allow_num", 
-               "ben_per10000", "empl_total", "pop_urbanize", "fam_allow_amt",
-               "facil_res")
+var_focus <- c(
+  "pop_total",
+  "gas_conn_resi", "foster_fam", "ntl_mean_mask",
+  "elec_cons_percap", "tax_deduct_num", "fam_allow_num", 
+  "ben_per10000", "empl_total", "pop_urbanize",
+  "fam_allow_amt", "facil_res", "wage_sal_total",
+  "wage_sal_relat")
+year_focus <- c(2011, 2018:2025)
 ```
 
 @tbl-nmissing reports the number of missing observations per administrative division level/year.
@@ -135,7 +139,7 @@ var_focus <- c("gas_conn_resi", "foster_fam", "ntl_mean_mask",
 #| tbl-cap: N missing observations by year, variable and aggregation level
 all_dta  |>
   filter(var %in% var_focus) |>
-  get_missing(geoms = geoms, range = c(2011, 2018:2025)) |>
+  get_missing(geoms = geoms, range = year_focus) |>
   mutate(across(where(is.character), ~ ifelse(is.na(.), "N/A", .))) |>
   add_varnames(meta = meta_vars) |>
   mutate(var_name = str_c("'", var, "': ", var_name)) |>
@@ -143,8 +147,9 @@ all_dta  |>
   arrange(var_name) |>
   group_by(var_name) |>
   as_flextable(hide_grouplabel = TRUE) |> 
-  add_footer_lines(values = 
-                     as_paragraph("Note: 'N/A' means that no data is available for the selected variable."))
+  add_footer_lines(
+    values = 
+      as_paragraph("Note: 'N/A' means that no data is available for the selected variable."))
 ```
 
 Plots below plot the data on the map for all variables, key years, and key administrative levels.
@@ -155,7 +160,10 @@ var_focus |>
   walk(~ {
     try({
       out_plot <- all_dta |>
-        plot_var_by_year(.x, geoms, meta_vars, years = c(2011, 2018, 2024))
+        plot_var_by_year(.x, 
+                         geoms, 
+                         meta_vars, 
+                         years = c(2011, 2018, 2024))
       print(out_plot)
     }, silent = T)
   })
@@ -169,33 +177,118 @@ Example below shows how the merged data set could look like.
 
 ```{r echo=TRUE}
 dta_rhs <-
-  all_dta  |> filter(var %in% var_focus) |> 
+  all_dta  |> 
+  filter(var %in% var_focus,
+         year %in% year_focus) |>
+  pl_decode_id() |> pl_rename_levels_dta() |> pl_rename_levels() |> 
+  select(-matches("id\\d_"), -type_LAU) |> 
   pivot_wider(names_from = var, values_from = val) |> 
   mutate(
-    across(any_of(c("fam_allow_num", "foster_fam")),
-           ~ log(.)),
+    # across(any_of(var_focus), ~ log(.)),
     fam_allow_perfam =  fam_allow_amt / fam_allow_num
-  )
+  ) |> 
+  mutate(across(where(is.numeric), 
+                ~ ifelse(is.infinite(.), NA_real_, .)))
 
 dta_rhs |> glimpse()
 ```
+
+## Computing additioanl variables
+
+### Wage as % of country averge
+
+```{r}
+dta_rhs_post <- 
+  dta_rhs |> 
+  filter(year %in% year_focus, 
+         level %in% c("NUTS 3", "LAU 1")) |> 
+  group_by(year, level) |> 
+  mutate(
+    # Weighted average
+    wage_sal_total_country =
+      sum(wage_sal_total * pop_total, na.rm = TRUE) /
+      sum(pop_total, na.rm = TRUE),
+    
+    wage_sal_total_share_country = 
+      wage_sal_total / wage_sal_total_country,
+    
+    # Log transformation
+    across(
+      any_of(c("wage_sal_total_log", "")), 
+      ~ log(.)
+    )
+  ) |> 
+  ungroup()
+
+dta_rhs_post |> glimpse()
+```
+
 
 To assure quality of newly created variables, they could be visually inspected.
 
 ```{r}
 dta_rhs |>
-  select(id, year, fam_allow_perfam) |>
-  pivot_longer(fam_allow_perfam, names_to = "var", values_to = "val") |>
-  plot_var_by_year("fam_allow_perfam", 
+  select(id, year, wage_sal_total_share_country) |>
+  pivot_longer(wage_sal_total_share_country, names_to = "var", values_to = "val") |>
+  plot_var_by_year("wage_sal_total_share_country", 
                    geoms = geoms, 
-                   meta  = tibble(var_id = "fam_allow_perfam", 
-                                  var_name = "Allowance per family", 
-                                  var_units = "PLZ / Family")
+                   meta  = tibble(var_id = "wage_sal_total_share_country", 
+                                  var_name = "Wage s % of country average", 
+                                  var_units = "%")
                    , years = c(2011, 2018, 2024))
 ```
 
 Resulting data set should be stored in the data-clean folder. It is advised using `pins` package as it can save the history of changes in the data. 
 
 ```{r saving data}
-bd_clean |> pin_write(dta_rhs, name = "sae_data", type = "rds")
+bd_clean |> pin_write(dta_rhs_post, name = "sae_data", type = "rds")
+dta_rhs_post |> write_excel_csv("data/clean/sae_data.csv")
 ```
+
+
+# Basic exploratory analysis
+
+## Correlation analysis
+
+```{r}
+library(correlation)
+
+dta_rhs_post |>
+  filter(year %in% c(2011, 2018, 2024)) |> 
+  glimpse() |> 
+  select(wage_sal_total_share_country, fam_allow_num, fam_allow_perfam) |> 
+  correlation()
+```
+
+## Scatter plots
+
+```{r}
+dta_rhs_post |> 
+  # filter(level == "LAU 1") |> 
+  ggplot() + 
+  aes(x = wage_sal_total, y = fam_allow_perfam, 
+      colour = factor(year),
+      group = factor(year)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE) + 
+  scale_x_log10() + 
+  scale_y_log10() +
+  annotation_logticks() + 
+  theme_bw() + 
+  facet_wrap(. ~ level)
+```
+
+## Density curves
+
+```{r}
+dta_rhs_post |> 
+  ggplot() + 
+  aes(x = ben_per10000, colour = factor(year), group = factor(year)) + 
+  geom_density() + 
+  scale_x_log10() +
+  annotation_logticks() + 
+  theme_bw()  + 
+  facet_wrap(. ~ level)
+```
+
+

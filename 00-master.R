@@ -38,6 +38,6 @@ quarto::quarto_render(
 quarto::quarto_render(
   "30-data-mege.qmd",
   execute_params = list(
-    eval_all = TRUE, # Set to TRUE to run all calculations.
+    eval_all = TRUE # Set to TRUE to run all calculations.
   )
 )

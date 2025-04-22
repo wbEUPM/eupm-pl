@@ -400,6 +400,6 @@ if (params$harvest) {
 #| fig-cap: Cell network coverage
 bd_raw |> pin_read("gsm")  |> pl_decode_id() |>
   filter(type_LAU %in% c("0", "1", "2", "3")) |>
-  select(id, year, var, val) |>  plot_var("lte_n", geoms)
+  select(id, year, var, val) |>  plot_var("lte_n", geoms, meta_vars)
 ```
 

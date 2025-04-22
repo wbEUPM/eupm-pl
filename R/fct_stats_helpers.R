@@ -85,6 +85,7 @@ pl_rename_levels <- function(dta) {
   dta |> 
     mutate(
       level = case_when(
+        level == "level0" ~ "Country",
         level == "level1" ~ "NUTS 1",
         level == "level2" ~ "Regions",
         level == "level3" ~ "NUTS 2",
@@ -156,19 +157,21 @@ plot_admin_map <- function(dta) {
 #' @export
 get_missing <- function(dta, geoms, range = c(2011, 2019:2030), focus_levels = 4:5) {
   geoms |>
-    imap( ~ .x |> mutate(level = .y)) |>
+    imap( ~ .x |> mutate(level = .y, nn = n())) |>
     bind_rows() |>
     st_drop_geometry() |>
     left_join(dta, by = join_by(id)) |>
     as_tibble() |>
-    group_by(level, year, var) |>
+    group_by(level) |> 
+    mutate(nn = max(nn, na.rm = TRUE)) |> 
+    group_by(level, year, var, nn) |>
     summarise(n = n(),
               missing = str_c(sum(is.na(val) | val == 0)),# "/", n()),
               .groups = "drop") |>
     filter(year %in% range)  |>
     select(-n) |>
-    # mutate(year = str_c(year, " (", n, ")")) |>
     pivot_wider(values_from = missing, names_from = year) |> 
+    mutate(across(matches("\\d{4}"), ~ ifelse(is.na(.), as.character(nn), .))) |> 
     filter(level %in% str_c("level", focus_levels)) |> 
     pl_rename_levels()
 }

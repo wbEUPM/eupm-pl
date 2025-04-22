@@ -40,5 +40,17 @@ appear in the GitHub history to preserve privacy.
 └── _quarto.yml
 ```
 
+## Prinsipals of data storage
+
+To save data, we rely on R (pins.rstudio.com)[https://pins.rstudio.com/], which 
+enable keeping a history of the data changes on the local folder structure.
+
+## Dat reload from the API
+
+To reload the data from the API, follow the instructions in the script 
+`20-other-variables.qmd`. Please note that by default, all data is reloaded 
+at once. It may take a while.
+
+
 
 
