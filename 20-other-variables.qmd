@@ -25,31 +25,29 @@ if ("try-error" %in% class(try(params$eval_all)))
 #| error: false
 
 # Libraries
-library(dplyr)
-library(purrr)
-library(tidyr)
-library(readr)
-library(pins)
-library(readxl)
-library(arrow)
-library(glue)
-library(stringr)
-library(forcats)
-
-library(ggplot2)
-library(scales)
-library(patchwork)
-
-library(sf)
-library(mapview)
-library(flextable)
-library(ftExtra)
-library(knitr)
-library(htmltools)
-library(lubridate)
-
-# Poland's database API
-library(bdl)
+pacman::p_load(
+  dplyr,
+  purrr,
+  tidyr,
+  readr,
+  pins,
+  readxl,
+  arrow,
+  glue,
+  stringr,
+  forcats,
+  ggplot2,
+  scales,
+  patchwork,
+  sf,
+  mapview,
+  flextable,
+  ftExtra,
+  knitr,
+  htmltools,
+  lubridate,
+  bdl # Poland's database API  
+)
 
 # Chunk setup
 knitr::opts_chunk$set(
@@ -73,7 +71,6 @@ bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
 
-# 
 # bd_geom <- file.path("data-clean", "geom") |> board_folder(versioned = T)
 
 # Years range

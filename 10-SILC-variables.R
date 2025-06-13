@@ -6,21 +6,30 @@
 
 # Setup --------------------------------------------------------------------
 
-library(haven)
-library(dplyr)
-library(purrr)
-library(tidyr)
-library(stringr)
-library(readr)
-library(Hmisc)
-library(openxlsx)
-library(reldist)
-library(survey)
+pacman::p_load(haven,
+               dplyr,
+               purrr,
+               tidyr,
+               stringr,
+               readr,
+               Hmisc,
+               openxlsx,
+               reldist,
+               survey,
+               pins)
 
 # Define paths to data ---------------------------------------------------
-data_raw <- "./data/raw/silk-sample" # path to the SLIC data. Uses simulated data for now.
-data_aux <- "./data/temp"            # Path to where aggregated data is saved
 
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+
+data_raw <- root_raw |> file.path("silk-sample") 
 # General guidance ----------------------------------------------------------------
 
 # 1. Ensure that sub national unit variables are properly identifies (if applies)
@@ -116,6 +125,7 @@ survey_design <- svydesign(
 )
 
 # Variables list for which we compute means and variances ------------------
+
 # Note: Make sure check and report the number of missing observations in these variables
 stats_cols <- c("inc_adeq_euro", 
                 "fgt0_arop", "fgt1_arop", "fgt2_arop", "arope", 
@@ -160,14 +170,11 @@ df_svywtd <-
   arrange(year, subcode) 
 
 # Compiling all data ------------------------------------------------------
-df_out <- df_wtd |> left_join(df_svywtd, by = join_by(code, year, subcode))
+df_out <-
+  df_wtd |> left_join(df_svywtd, by = join_by(code, year, subcode)) |> 
+  select(id = subcode, year, everything()) |> 
+  select(-code) 
 
 # Saving data -----------------------------------------------------------
-write_rds(df_out, file.path(data_aux, "eu-silc.rds"), compress = "gz")
-write_csv(df_out, file.path(data_aux, "eu-silc.csv"))
-
-# Save as Excel (.xlsx), if needed
-write.xlsx(df_out,
-           file.path(data_aux, "EU_SILC_Indicators.xlsx"),
-           sheetName = "R",
-           overwrite = TRUE)
+bd_clean |> pin_write(df_out, name = "pov_direct", type = "rds")
+write_csv(df_out, file.path(root_clean, "pov_direct.csv"))
