@@ -70,9 +70,6 @@ bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
 
-# 
-# bd_geom <- file.path("data-clean", "geom") |> board_folder(versioned = T)
-
 # Years range
 range <- c(2011, 2019:2030)
 ```
@@ -112,18 +109,44 @@ Administrative boundaries for Poland changed over time. Data for 2010-2023 has t
 ```{r eval=params$eval_all}
 #| label: dta-geom
 root_raw |> file.path("geometries", "bdl.maps.2023.RData") |> load()
-
-bdl.maps.2023$level0 <- bdl.maps.2023$level1 |> summarise() |> 
+bdl.maps.2023$level0 <- bdl.maps.2023$level1 |> summarise() |>
   mutate(id = "000000000000", name = "POLAND")
 bdl.maps.2023 <- bdl.maps.2023[order(names(bdl.maps.2023))]
-
-bd_aux |> pin_write(bdl.maps.2023, name = "geometries", type = "rds")
+bd_clean |> pin_write(bdl.maps.2023, name = "geometries", type = "rds")
 rm(bdl.maps.2023)
+
+
+# load_clean_geom <- function(file_name, year = str_extract(file_name, "\\d{4}") |> as.numeric()) {
+#   
+#   obj <- str_remove(file_name, regex("\\.rdata", ignore_case = T))
+#   temp_env <- new.env()
+#   root_raw |>
+#     file.path("geometries", file_name) |> 
+#     load(envir = temp_env)
+#   
+#   dta  <- temp_env[[obj]]
+#   dta$level0 <- 
+#     dta$level1 |> summarise() |>
+#     mutate(id = "000000000000", name = "POLAND")
+#   dta <- dta[order(names(dta))]
+#   dta |> map(~ .x |> mutate(year = year) |> select(id, name, year, everything()))
+# }
+# 
+# # file_name <- "bdl.maps.2010.RData"
+# # load_clean_geom("bdl.maps.2010.RData")
+# 
+# all_dta <- 
+#   root_raw |> file.path("geometries") |> list.files() |> sort() |> 
+#   map(load_clean_geom) |> 
+#   map(~{list(.x) |> set_names(nm = .x$level0$year)}) |> 
+#   unlist(recursive = F) 
+# 
+# bd_clean |> pin_write(all_dta, name = "geometries", type = "rds")
 ```
 
 ```{r eval=TRUE}
 #| label: load-geom
-geoms <- bd_aux |> pin_read("geometries")
+geoms <- bd_clean |> pin_read("geometries")
 ```
 
 ```{r eval=TRUE}
