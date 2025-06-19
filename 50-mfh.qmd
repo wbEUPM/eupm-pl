@@ -6,7 +6,7 @@ editor: visual
 bibliography: references.bib
 ---
 
-```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
+```{r}
 #| label: setup
 #| echo: false
 #| warning: false
@@ -646,7 +646,7 @@ Next, we will show the benefits of small area estimation over direct estimation
 
 ### Comparing Direct Estimation to Multivariate Model Outputs
 
-```{r}
+```{r, warning=FALSE, message = FALSE, error = FALSE}
 
 model2mse_dt <- 
   model2_obj$MSE |>
@@ -732,6 +732,12 @@ mfh_dt |>
 Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation. 
 
 ```{r}
+
+numeric_cols <- sapply(model2pov_dt, is.numeric)
+model2pov_dt_clean <- model2pov_dt[complete.cases(model2pov_dt[, numeric_cols]) &
+                                     apply(model2pov_dt[, numeric_cols], 1, function(row)
+                                       all(is.finite(row))), ]
+  
 
 # Make year a factor using year_var
 model2pov_dt_clean[[year_var]] <- as.factor(model2pov_dt_clean[[year_var]])
@@ -995,10 +1001,11 @@ shp_dt$growth_rate_capped <- pmin(shp_dt$growth_rate, 1)
 
 ggplot(shp_dt) +
   geom_sf(aes(fill = growth_rate_capped), color = NA) +
-  scale_fill_viridis_c(
+  scale_fill_viridis(
     name = "Growth Rate (capped at 1)",
     limits = c(min(shp_dt$growth_rate_capped), 0.5),
-    oob = squish
+    oob = squish,
+    option = "magma",
   ) +
   theme_minimal() +
   labs(
