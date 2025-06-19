@@ -59,7 +59,7 @@ An overview of the MFH model estimation process is as follows:
 
 -   Step 2: Prepare variables (from administrative data or other sources of data representative at the target area level) at the level of the target area for each time instant in the MFH model. We present a simple approach which performs model selection in a pooled linear regression model without time effects.
 
--   Step 3: Fit the MFH models to test for homoskedastic area-time effects $({\mu_d}_1, ... , {\mu_d}_T)$ are homoskedastic or not. If we reject the homoskedasticity of variances, implement the MFH3 model. Otherwise, we proceed with the MFH2 model. For the purposes of this training, we assume a homoskedastic model for simplicity. 
+-   Step 3: Fit the MFH models to test for homoskedastic area-time effects $({\mu_d}_1, ... , {\mu_d}_T)$ are homoskedastic or not. If we reject the homoskedasticity of variances, implement the MFH3 model. Otherwise, we proceed with the MFH2 model. For the purposes of this training, we assume a homoskedastic model for simplicity.
 
 -   Step 4: Check the selected model assumptions, including linearity, normality of predicted area effects and standardized model residuals, and the presence of the outlying areas.
 
@@ -79,18 +79,17 @@ In this example, we use a synthetic data set adapted from R package `sae` called
 
 We will show how to estimate a poverty map for each year by using the Multivariate Fay Herriot modelling approach. This approach allows us to take advantage of the temporal correlation between poverty rates i.e. an individuals income in year $t$ is likely correlated with their income in year $t+1$.
 
-The rest of this tutorial shows how to prepare MFH models using a random 10% sample of the `incomedata` to estimate the poverty rates. 
+The rest of this tutorial shows how to prepare MFH models using a random 10% sample of the `incomedata` to estimate the poverty rates.
 
+## Step 0: The Data Preparation Phase
 
-## Step 0: The Data Preparation Phase 
-
-The MFH estimation process relies on 3 types of data: 
+The MFH estimation process relies on 3 types of data:
 
 (1) The data containing the outcome variable from which direct estimates will be computed. This is a usually a survey dataset for each year of data including outcome variable (such as income or welfare aggregates), weights, cluster identifiers (i.e. if available, psu or enumeration areas) at the unit level i.e. individual or household. In this example, we call this: `survey_dt`
 
 (2) A dataset containing for the right hand side (RHS) variables i.e. indicator estimates representative at the level of the target area for each year. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id, year and variables of interest. In this example, we call this `rhs_dt`
 
-(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt` 
+(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`
 
 ```{r load-data, message = FALSE, warning = FALSE}
 
@@ -112,7 +111,7 @@ shp_dt <-
 
 ```
 
-Below is what our datasets look like. These are generally the variables  
+Below is what our datasets look like. These are generally the variables
 
 ```{r}
 
@@ -120,7 +119,8 @@ survey_dt |>
   glimpse()
 
 ```
-`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level. 
+
+`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
 
 ```{r}
 
@@ -128,8 +128,8 @@ rhs_dt |>
   glimpse()
 
 ```
-``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`. 
 
+\``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
 ```{r}
 
@@ -137,9 +137,11 @@ shp_dt |>
   glimpse()
 
 ```
-`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`. 
 
-A quick summary table on the data needs for the MFH model: 
+`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
+
+A quick summary table on the data needs for the MFH model:
+
 ```{r}
 
 # Create the table content
@@ -184,14 +186,16 @@ mfh_table %>%
 
 ```
 
-For ease of use of this tutorial, make sure the variable names match as described across the datasets i.e. use the same target area variables and year variable name across all 3 datasets. 
-
+For ease of use of this tutorial, make sure the variable names match as described across the datasets i.e. use the same target area variables and year variable name across all 3 datasets.
 
 ## Step 1: Direct Estimation of Poverty & Variance-Covarance Matrix
+
 We will use the direct HT estimators that use the survey weights in `weight` variable. First, we calculate the total sample size, the number of provinces, the sample sizes for each province and extract the population sizes for each province/target area from the `sizeprov` file. For those using the household/individual level survey data, this may be obtained from the sum of the household or individual weights as appropriate.
 
-### Simple Direct Estimation 
-The goal is simply to apply the poverty line to the 
+### Simple Direct Estimation
+
+The goal is simply to apply the poverty line to the
+
 ```{r}
 
 ### a little bit of housekeeping to ensure ease of access 
@@ -231,8 +235,7 @@ direct_dt <-
   
 ```
 
-
-Here is what the results look like: 
+Here is what the results look like:
 
 ```{r}
 
@@ -240,10 +243,9 @@ direct_dt
 
 ```
 
-
 ### Computing the Variance-Covariance Matrix for the Sampling Error of the Direct Estimate
 
-Next, we quickly estimate the sample variance and covariance for the direct estimator using the survey R package as below. We apply the `compute_vcov()` function which we have created as a wrapper on the `survey::svymean()` and `survey::svyvar()` functions to estimate the variance covariance matrix. 
+Next, we quickly estimate the sample variance and covariance for the direct estimator using the survey R package as below. We apply the `compute_vcov()` function which we have created as a wrapper on the `survey::svymean()` and `survey::svyvar()` functions to estimate the variance covariance matrix.
 
 ```{r}
 
@@ -293,12 +295,13 @@ var_dt <-
 
 ```
 
-It is noteworthy that the `var_dt` object is estimated at the level of the target area. Hence, for reasons that will be made self-evident later, the `var_dt` is not a matrix for each area rather the matrix is stored rowwise. 
+It is noteworthy that the `var_dt` object is estimated at the level of the target area. Hence, for reasons that will be made self-evident later, the `var_dt` is not a matrix for each area rather the matrix is stored rowwise.
 
 #### Handling Low Sample Sizes: Variance Smoothing
+
 A quick inspection of the preceding results will show some provinces contain low sample sizes which sometimes result in extreme value poverty rates and hence 0 variance. To avoid this, we will show you how to apply the variance smoothing method suggested by [@you2023application]. Please see the code and Roxygen comments below explaining the use of the `varsmoothie_king()` function which computes smoothed variances.
 
-The goal now is to use the above `varsmoothie_king()` function to add additional columns of smoothed variances into our `var_dt` object. 
+The goal now is to use the above `varsmoothie_king()` function to add additional columns of smoothed variances into our `var_dt` object.
 
 ```{r, message = FALSE, warning = FALSE}
 
@@ -336,11 +339,11 @@ var_dt <-
 
 Now, you can replace the zero/near zero sample size area MSEs with their smoothed variances.
 
-
 ## Step 2: Variable Preparation and Model Selection
 
 ### Data Preparation for Model Selection & MFH estimation
-Thus far, we have careful set up the types of data we require for the MFH model. One final step of variable preparation is necessary to use the `eblupUFH` and `eblupMFH` functions. This requires that we reshape the set of candidate variables dataset i.e. the `rhs_dt` object into wide format. We will also have to reshape our direct estimates and merge this into `rhs_dt` as well as `var_dt`. All the data we have created thus far needs to be placed together ultimately for the EBLUP estimation.  
+
+Thus far, we have careful set up the types of data we require for the MFH model. One final step of variable preparation is necessary to use the `eblupUFH` and `eblupMFH` functions. This requires that we reshape the set of candidate variables dataset i.e. the `rhs_dt` object into wide format. We will also have to reshape our direct estimates and merge this into `rhs_dt` as well as `var_dt`. All the data we have created thus far needs to be placed together ultimately for the EBLUP estimation.
 
 ```{r}
 
@@ -374,14 +377,13 @@ mfh_dt <-
 
 ```
 
-Here is what the data looks like: 
+Here is what the data looks like:
 
 ```{r}
 
 mfh_dt |>
   glimpse()
 ```
-
 
 ### Variable Selection Process
 
@@ -431,10 +433,9 @@ mfh_formula <-
 
 ```
 
-
 ## Step 3: Fitting the Multivariate Fay Herriot Model
 
-Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model. 
+Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
 
 ```{r}
 
@@ -456,9 +457,8 @@ model2_obj <- eblupMFH2(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 
 
 ```
 
-
-
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
+
 We now verify the assumptions of the MFH3 model. This includes assessing linearity, the normality of the predicted area effects and standardized residuals, as well as checking for the presence of outlying areas.
 
 ### Linearity Test
@@ -509,7 +509,7 @@ test_list <-
 
 ```
 
-Here is what the results look like: 
+Here is what the results look like:
 
 ```{r}
 
@@ -518,10 +518,10 @@ test_list %>%
          FUN = summary)
 ```
 
-The results particularly for the final 2 years indicate that we might need to retransform the variables in the model as there are potentially non linear relationships which our model is not capturing. Perhaps creating higher order polynomials and other variable transformations of our right hand side variables reduce the error rates within the model. 
-
+The results particularly for the final 2 years indicate that we might need to retransform the variables in the model as there are potentially non linear relationships which our model is not capturing. Perhaps creating higher order polynomials and other variable transformations of our right hand side variables reduce the error rates within the model.
 
 ### Evaluating the Normality Assumption
+
 #### The Shapiro Wilks Test
 
 We use the shapiro wilks test of normality using the `shapiro.test()` function in base R. The Shapiro-Wilk test assesses whether a sample of data is drawn from a normally distributed population. It does so by comparing the order statistics (i.e., sorted values) of the sample to the expected values under a normal distribution. Specifically, the test statistic $W$ is a ratio of the squared correlation between the observed sample quantiles and the corresponding normal quantiles.
@@ -640,7 +640,7 @@ raneff_dt %>%
 
 ```
 
-In both cases, we compare the p-value to the 0.05 level of significance. The results suggest that in most cases we have to reject the null hypothesis of normally distributed model errors and random effects. This doesn't affect the validity of our poverty estimates for the Multivariate Fay Herriot model. However, subsequent analysis that will assume a normal distribution of the model errors cannot be performed. One good example of this is the statistical significance test for changes in poverty rates over time. For the purposes of this tutorial, we will carry on to show how to perform this under the assumption of normally distributed model errors. However, if the test for normality fails, this test cannot be carried out. 
+In both cases, we compare the p-value to the 0.05 level of significance. The results suggest that in most cases we have to reject the null hypothesis of normally distributed model errors and random effects. This doesn't affect the validity of our poverty estimates for the Multivariate Fay Herriot model. However, subsequent analysis that will assume a normal distribution of the model errors cannot be performed. One good example of this is the statistical significance test for changes in poverty rates over time. For the purposes of this tutorial, we will carry on to show how to perform this under the assumption of normally distributed model errors. However, if the test for normality fails, this test cannot be carried out.
 
 Next, we will show the benefits of small area estimation over direct estimation
 
@@ -727,9 +727,7 @@ mfh_dt |>
 
 ```
 
-
-
-Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation. 
+Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation.
 
 ```{r}
 
@@ -770,7 +768,7 @@ ggplot(model2pov_dt_clean, aes(x = .data[[year_var]])) +
   )
 ```
 
-The other advantage of MFH estimation is the smoothing of the model estimates over the unit variate model. We can show this below as well: 
+The other advantage of MFH estimation is the smoothing of the model estimates over the unit variate model. We can show this below as well:
 
 ```{r}
 
@@ -825,13 +823,13 @@ ggplot(model2pov_dt, aes(x = .data[[year_var]])) +
 
 ```
 
-It can be seen from the plots that the provinces in with the highest variance in UFH poverty estimates tend to provide smoother MFH estimates particularly in the provinces with smaller samples. This shows the power of the MFH approach in taking advantage of the across year correlation of poverty. 
+It can be seen from the plots that the provinces in with the highest variance in UFH poverty estimates tend to provide smoother MFH estimates particularly in the provinces with smaller samples. This shows the power of the MFH approach in taking advantage of the across year correlation of poverty.
 
-Next we will assume our model errors were normally distributed in order to show how to statistically test to see if poverty has changed between given years. 
+Next we will assume our model errors were normally distributed in order to show how to statistically test to see if poverty has changed between given years.
 
-### Did the poverty rates change over time? 
+### Did the poverty rates change over time?
 
-Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well as, the MSEs of the EBLUPs for each time point, and the MCPEs for each pair of time points based on the MFH model 2 as follows: 
+Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well as, the MSEs of the EBLUPs for each time point, and the MCPEs for each pair of time points based on the MFH model 2 as follows:
 
 ```{r}
 
@@ -918,10 +916,7 @@ comp13_obj$plot
 
 ```
 
-
-
-
-See the data created 
+See the data created
 
 ```{r}
 
@@ -948,11 +943,11 @@ comp13_obj$df %>%
 
 ```
 
-
 ### Some Other Post-Estimation Analytics
-Now that we have estimated the MFH models, we might be interested in the following: 
 
-- quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
+Now that we have estimated the MFH models, we might be interested in the following:
+
+-   quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
 
 ```{r}
 
@@ -991,8 +986,7 @@ longpov_dt |>
 
 ```
 
-
-Lets plot this like with a heatmap on a shapefile: 
+Lets plot this like with a heatmap on a shapefile:
 
 ```{r}
 
@@ -1021,54 +1015,3 @@ ggplot(shp_dt) +
   )
 
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
