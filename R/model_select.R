@@ -13,7 +13,7 @@
 #' @import caret
 #' @importFrom emdi step fh
 
-step_wrapper <- function(dt, xvars, y, cor_thresh = 0.95, criteria = "AIC",
+step_wrapper_fh <- function(dt, xvars, y, cor_thresh = 0.95, criteria = "AIC",
                          vardir, transformation = "no", eff_smpsize) {
   
   dt <- as.data.table(dt)

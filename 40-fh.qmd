@@ -1,8 +1,51 @@
 ---
+title: "The Univariate Fay-Herriot model"
+author: "Sylvia Harmening"
+format: html
+editor: visual
 bibliography: references.bib
 ---
 
-# The Univariate Fay-Herriot model
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
+#| label: setup
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
+
+pak_list <- c("sf", "data.table", "tidyverse", "car", 
+              "sae", "survey", "spdep", "knitr", "MASS", "caret",
+              "caret", "purrr", "pins", "gt",  "scales",
+              "viridis", "emdi")
+
+sapply(pak_list,
+       library,
+       character.only = TRUE)
+
+
+# Loading locally-developed
+list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
+  walk(source)
+
+# Raw data root
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean-example"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+
+```
 
 ## Introduction
 
@@ -32,21 +75,6 @@ We will show below the use of the `fh()` function of the R package `emdi` [@Harm
 
 ## Data and preparation
 
-### Load required libraries
-
-First of all, load the required R libraries. The code automatically installs the packages that are not yet installed and loads them. If you need further packages, please add them to the list of `p_load` which contains the packages required to the run the codes.
-
-```{r libraries, message = FALSE, warning = FALSE}
-if (sum(installed.packages()[,1] %in% "pacman") != 1){
-  
-  install.packages("pacman")
-  
-}
-
-pacman::p_load(sae, survey, spdep, emdi, data.table, MASS, caret, dplyr, sf)
-
-```
-
 ### Load the dataset
 
 Usually, SAE combines multiple data sources: a survey data set and a census or administrative/register dataset. For the estimation of area-level models, we need area-level aggregates of the same area-level (e.g. NUTS3) of both datasets. The target variable (typically household welfare/income for poverty mapping) is available in the survey but not in the census data.
@@ -55,57 +83,184 @@ In this example, we use a synthetic data set adapted from R package `sae` called
 
 For this exercise, we use a random 10% sample of the `incomedata` to estimate the poverty rates. For the univariate case, we use the income variable from 2012.
 
-```{r load_data, message = FALSE, warning = FALSE}
-sample_dt <- readRDS("data/incomedata_sample.RDS")
-glimpse(sample_dt)
+The FH estimation process relies on 3 types of data: 
 
-aux_dt <- readRDS("data/incomedata_sample.RDS")
-glimpse(aux_dt)
+(1) The data containing the outcome variable from which direct estimates will be computed. This is a usually a survey dataset for each year of data including outcome variable (such as income or welfare aggregates), weights, cluster identifiers (i.e. if available, psu or enumeration areas) at the unit level i.e. individual or household. In this example, we call this: `survey_dt`.
+
+(2) A dataset containing for the right hand side (RHS) variables i.e. indicator estimates representative at the level of the target area. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id and variables of interest. In this example, we call this `rhs_dt`.
+
+(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`. 
+
+```{r load-data, message = FALSE, warning = FALSE}
+
+### lets read in our 3 aforementioned datasets 
+
+survey_dt <- 
+  bd_clean |>
+  pin_read("pov_direct")
+
+
+rhs_dt <- 
+  bd_clean |>
+  pin_read("sae_data")
+  
+
+shp_dt <- 
+  bd_clean |>
+  pin_read("geometries")
+
+
 ```
+
+Below is what our datasets look like. These are generally the variables  
+
+```{r}
+
+survey_dt |>
+  glimpse()
+
+```
+`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level. 
+
+```{r}
+
+rhs_dt |>
+  glimpse()
+
+```
+``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`. 
+
+
+```{r}
+
+shp_dt |>
+  glimpse()
+
+```
+`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`. 
+
+A quick summary table on the data needs for the MFH model: 
+```{r}
+
+# Create the table content
+fh_table <- tibble::tibble(
+  Dataset = c("`survey_dt`", "`rhs_dt`", "`shp_dt`"),
+  `Unit of Observation` = c(
+    "Individual (or Household)",
+    "Target Area (e.g. Province)",
+    "Target Area (Spatial)"
+  ),
+  `Required Variables` = c(
+    "`target area identifiers`, `weights`, `cluster identifier`, year, `income/welfare variable`, `poverty line`",
+    "`target area identifiers`, `year`, `covariates` (e.g. `gen`, `educ1`, `schyrs`, etc.)",
+    "`target area identifiers`, `geometries` (e.g. `geometry` column from `sf`)"
+  )
+)
+
+
+# Build the gt table
+fh_table %>%
+ gt() %>%
+  tab_header(
+    title = md("**Data Input Checklist for the Univariate Fay-Herriot Model**"),
+    subtitle = md("*Datasets, levels, and Required variables*")
+  ) %>%
+  cols_label(
+    Dataset = "Dataset Name",
+    `Unit of Observation` = "Unit of Observation",
+    `Required Variables` = "Required Variables"
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    table.font.size = 12,
+    column_labels.font.weight = "bold",
+    data_row.padding = px(4),
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    heading.align = "left"
+  ) %>%
+  fmt_markdown(columns = everything())
+
+```
+
 
 ### Direct estimation
 
 We will use the direct Horvitz-Thompons estimators that use the survey weights in `weight` variable. We calculate the sample sizes for each provinces and compute the direct estimates and their variances. We use the `direct` function of the `emdi` package here. Other options are e.g. the `direct` function of package `sae` [@molinamarhuenda2015] or the `svyby` command of package `survey` [@Lumley2024]. Then, we create a dataframe containing the direct estimate, the standard errors, the variances, the coefficient of variation and the design effects, that are needed for the arcsin transformation. The design effect is the ratio of the variance considering the sampling design to the variance estimated under simple random sampling. For detailled information about the arcsin transformation please refer to @Casas2016 and @Schmid2017. In some areas with a very small sample size, it may occur, that the individual data only consists of zeros and ones, resulting in a direct estimate of zero or one and a direct variance of zero. We set those areas to out-of-sample and for the final estimation results only the synthetic part of the FH model is used.
 
 ```{r direct, message = FALSE, warning = FALSE}
+### a little bit of housekeeping to ensure ease of access 
+area_vars <- c("prov", "provlab") ### both variables are at the same level. If the levels vary, you would need to combine both variables for effect use
+
+cluster_var <- "ea_id"
+
+weight_var <- "weight"
+
+year_var <- "year"
+
+outcome_var <- "income"
+
+povline_var <- "povline"
+
+candidate_vars <- colnames(rhs_dt)[!colnames(rhs_dt) %in% c(area_vars, year_var)]
+
+## For the univariate model, we only use a single year (here 2012)
+singleyear <- "2012"
+
+survey_dt <- survey_dt |>
+  filter(year == singleyear)
+
+rhs_dt <- rhs_dt |>
+  filter(year == singleyear)
+
+
 ## calculate sample size for each province
 sampsize_dt <- 
-income_dt |>
-  group_by(provlab) |>
+survey_dt |>
+  group_by(!!!syms(area_vars[1])) |>
   summarize(N = n())
 
-## computation of direct estimates and their variances
-direct_dt <- emdi::direct(y = "income2012",
-                       smp_data = income_dt |> as.data.table(),
-                       smp_domains = "provlab",
-                       weights = "weight",
-                       threshold = unique(income_dt$povline2012),
-                       var = TRUE)
+## computation of direct estimates and their variances (the poverty line is already included within the data)
+## creating the poverty indicator
+survey_dt <- 
+  survey_dt |>
+  mutate(pov_indicator = ifelse(income < povline, 1, 0))
 
-## create dataframe
+
+### creating a survey object
+design_obj <- survey::svydesign(ids = eval(expr(~!!sym(cluster_var))), 
+                                weights = eval(expr(~!!sym(weight_var))), 
+                                data = survey_dt)
+
+var_dt <- survey::svyby(~pov_indicator, by=eval(expr(~!!sym(area_vars[1]))), design = design_obj, FUN = survey::svymean)
+
+
 direct_dt <- 
-       direct_dt$ind |>
-       dplyr::select(Domain, Head_Count) |>
-       rename(Direct = "Head_Count") |>
-       merge(direct_dt$MSE |>
-               dplyr::select(Domain, Head_Count) |>
-               rename(vardir = "Head_Count"),
-             by = "Domain") |>
-       mutate(SD = sqrt(vardir)) |>
-       mutate(CV = SD / Direct) |>
-       merge(sampsize_dt |> 
-               mutate(provlab = as.factor(provlab)), 
-             by.x = "Domain", 
-             by.y = "provlab") |>
-      mutate(var_SRS = Direct * (1 - Direct) / N) |>
-      mutate(deff = vardir / var_SRS) |>
-      mutate(n_eff = N/deff)
+  var_dt |>
+  rename(direct_povrate = "pov_indicator") |>
+  rename(SD = "se") |>
+  mutate(vardir = SD^2) |>
+  mutate(CV = SD / direct_povrate) |>
+  merge(sampsize_dt, 
+        by = area_vars[[1]]) |>
+  mutate(var_SRS = direct_povrate * (1 - direct_povrate) / N) |>
+  mutate(deff = vardir / var_SRS) |>
+  mutate(n_eff = N/deff)
 
 ## set zero variance to OOS
 direct_dt <- direct_dt[complete.cases(direct_dt), ]
 
-## have a look at sample sizes
-summary(direct_dt$N)    
+```
+
+
+Here is what the results look like: 
+
+```{r}
+
+direct_dt
+
 ```
 
 ### Variance smoothing
@@ -115,13 +270,12 @@ A quick inspection of the preceding results will show some provinces contain low
 The goal now is to use the `varsmoothie_king()` function to add an additional column of smoothed variances into our `direct_dt` dataframe. Required inputs: a vector of unique domains, the raw variances estimated from sample data and the sample size for each domain.
 
 ```{r}
-source("R/var_smoothing.R")
-
-var_smooth <- varsmoothie_king(domain = direct_dt$Domain,
+var_smooth <- varsmoothie_king(domain = direct_dt[[area_vars[1]]],
                                direct_var = direct_dt$vardir,
                                sampsize = direct_dt$N)
 
-direct_dt <- var_smooth |> merge(direct_dt, by = "Domain")
+direct_dt <- var_smooth |> merge(direct_dt, by.x = "Domain",
+        by.y = area_vars[1])
 
 # Replace the variances that are zero with their smoothed counterparts
 direct_dt <- 
@@ -133,51 +287,12 @@ direct_dt <-
   ))
 ```
 
-### Auxiliary variable preparation
 
-The FH model is a model of poverty rates at the target area level, hence the data format required for this exercise has the province as its unit of observation. This format has a few essential columns:
-
--   Variable for poverty rates
-
--   The set of candidate variables from which the most predicted of poverty rates will be selected
-
--   The target area variable identifier (i.e. in this case the province variable `prov` and `provlab`)
-
-We prepare this dataset as follows:
+Thus far, we have careful set up the types of data we require for the FH model. We only need to combine the dataframe containing the direct estimates and their variances with the auxiliary variables.
 
 ```{r}
-## create the candidate variables
-candidate_vars <- colnames(income_dt)[!colnames(income_dt) %in% 
-                                         c("provlab", "prov", 
-                                           "income2012", "income2013", "income2014",
-                                           "povline2012", "povline2013", "povline2014",
-                                           "ac", "nat", "educ", "labor",
-                                           "age")]
- 
-## change dummy of gen to 0 and 1
-income_dt <- 
-  income_dt |>
-  mutate(across(c(gen), ~ case_when(
-    .x == 1 ~ 0,
-    .x == 2 ~ 1,
-    TRUE ~ NA_real_
-  )))
-
-## aggregating the unit-level data to the province level
-prov_dt <- 
-income_dt |>
-  group_by(provlab) |>
-  summarize(
-    across(
-      any_of(candidate_vars),
-      ~ weighted.mean(x = ., w = weight, na.rm = TRUE),
-      .names = "{.col}"
-    )
-  )
-
-### combine the the dataframe containing the direct estimates and their variances with the province level data
-comb_Data <- merge(direct_dt, prov_dt,
-    by.x = "Domain", by.y = "provlab",
+fh_dt <- merge(direct_dt, rhs_dt,
+    by.x = "Domain", by.y = area_vars[[1]],
     all = TRUE)
 
 ```
@@ -189,8 +304,8 @@ comb_Data <- merge(direct_dt, prov_dt,
 FH does not run if there is any missing value in the auxiliary variables, and therefore, any variable with missing value should be removed in advance.
 
 ```{r fh_model, message = FALSE, warning = FALSE}
-rowsNAcovariates <- rowSums(sapply(comb_Data[,..candidate_vars], is.na))
-comb_Data <- comb_Data[rowsNAcovariates == 0, ]
+rowsNAcovariates <- rowSums(sapply(fh_dt[,..candidate_vars], is.na))
+fh_dt <- fh_dt[rowsNAcovariates == 0, ]
 ```
 
 ### Check multicollinearity
@@ -200,16 +315,14 @@ With the help of the `step()` function of package `emdi`, we perform a variable 
 We apply the function to select the variables. Required inputs: data set, character vector containing the set of auxiliary variables, name of y variable, a correlation threshold between 0 and 1, name of information criterion and name of direct variance variable. In case, a transformation should be applied, "arcsin" as transformation and name of variable that contains the effective sample size.
 
 ```{r remove_multicol, message = FALSE, warning = FALSE}
-source("R/model_select.R")
-
-fh_step <- step_wrapper(dt = comb_Data, 
-                        xvars = candidate_vars,
-                        y = "Direct",
-                        cor_thresh = 0.8,
-                        criteria = "AIC",
-                        vardir = "vardir", 
-                        transformation = "arcsin", 
-                        eff_smpsize = "n_eff")
+fh_step <- step_wrapper_fh(dt = fh_dt,
+                           xvars = candidate_vars,
+                           y = "direct_povrate",
+                           cor_thresh = 0.8,
+                           criteria = "AIC",
+                           vardir = "vardir", 
+                           transformation = "arcsin", 
+                           eff_smpsize = "n_eff")
 
 print(fh_step$fixed)
 ```
@@ -221,14 +334,14 @@ In this example, we use the function `fh` to calculate the FH estimates. Because
 ```{r model_est, message = FALSE, warning = FALSE}
 fh_model <- fh(fixed = formula(fh_step$fixed),
                vardir = "vardir", 
-               combined_data = comb_Data, 
+               combined_data = fh_dt, 
                domains = "Domain",
                method = "ml", 
                transformation = "arcsin", 
                backtransformation = "bc",
                eff_smpsize = "n_eff", 
                MSE = TRUE, 
-               mse_type = "boot", B = c(50, 0)) 
+               mse_type = "boot", B = c(200, 0)) 
 
 ## In case, no transformation is desired, the call would like this:
 # fh_model <- fh(
@@ -245,7 +358,7 @@ With the help of the `summary` method of `emdi`, we gain detailed insights into 
 summary(fh_model)
 ```
 
-We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains belong to the domains with 0 direct and variance estimates that we set to `NA` in the beginning. The variance of the random effects equals 7.643268e-05. All of the included auxiliary variables are significant on a 0.05 significance level and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.74. The results of the Shapiro-Wilk-test indicate that normality is not rejected for both errors.
+We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains belong to the domains with 0 direct and variance estimates that we set to `NA` in the beginning. The variance of the random effects equals 7.643268e-05. All of the included auxiliary variables are significant on a 0.05 significance level and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.71. The results of the Shapiro-Wilk-test indicate that normality is not rejected for the standardized residuals.
 
 ### Diagnostic plots
 
@@ -255,7 +368,7 @@ We produce normal quantile-quantile (Q-Q) plots of the standardized realized res
 plot(fh_model)
 ```
 
-The plots show slight deviations of the distributions from normality, but together with the results of the Shapiro-Wilk-test, we do not reject the normality assumption.
+The plots show slight deviations of the distributions from normality.
 
 ## Comparison of the FH results with the direct estimates.
 
@@ -269,7 +382,7 @@ compare(fh_model)
 
 ```
 
-The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.68) between the direct and FH estimates.
+The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.63) between the direct and FH estimates.
 
 If the result of the model assessment is not satisfactory, the following should be checked again: Can the direct estimation including variance estimation be improved? Are there further auxiliary variables and/or must possible interaction effects be taken into account? Does a (different) transformation need to be used?
 
@@ -278,23 +391,18 @@ If the result of the model assessment is not satisfactory, the following should 
 Benchmarking is based on the principle that aggregated FH estimates should sum up to the estimates at a higher regional level. For the benchmark function, a benchmark value and a vector containing the shares of the population size per area ($N_d/N$) is required. Please note, that only the FH estimates are benchmarked and not their MSE estimates. As benchmark types "raking", "ratio" and "MSE_adj" can be chosen. For further details about using the function, please refer to the `emdi` vignette and for general information about the benchmarking options to @Datta2011.
 
 ```{r benchmarking, message = FALSE, warning = FALSE}
-## create the poverty indicator
-income_dt <- 
-  income_dt |>
-  mutate(poor2012 = ifelse(income2012 < povline2012, 1, 0))
-
-## compute the benchmark value (mean of poor2012 for the whole country of Spain)
-benchmark_value <- weighted.mean(income_dt$poor2012, income_dt$weight)
+## compute the benchmark value (mean of poverty indicator for the whole country)
+benchmark_value <- weighted.mean(survey_dt$pov_indicator, survey_dt[[weight_var]])
 
 ## compute the share of population size in the total population size (N_d/N) per area
 data("sizeprov")
-comb_Data <- comb_Data |>
+fh_dt <- fh_dt |>
   left_join(sizeprov |>
-  mutate(ratio_n = Nd/sum(Nd)), by = c("Domain" ="provlab"))
+  mutate(ratio_n = Nd/sum(Nd)), by = c("Domain" = area_vars[1]))
 
 fh_bench <- benchmark(fh_model,
                       benchmark = benchmark_value,
-                      share = comb_Data$ratio_n, 
+                      share = fh_dt$ratio_n, 
                       type = "ratio",
                       overwrite = TRUE)
 head(fh_bench$ind)
@@ -314,21 +422,17 @@ head(results)
 With the help of geographical maps, the results can be presented in a user-friendly way and differences among the areas can be detected more easily. For the map, a shape file is reqired. The domain identifiers in the results object (`fh_model`) need to match to the respective identifiers of the shape file. Therefore, we create a mapping table first and then produce the map by `emdi::map_plot`.
 
 ```{r fig-povmap}
-## load the shapefile dataframe and convert it to an object of type sf which is a necessary input for the map_plot function
-spain_dt <- readRDS("data/shapes/spainshape.RDS")
-spain_dt <- sf::st_as_sf(spain_dt)
-
 ## Create a suitable mapping table
 ## Find the right order
-domain_ord <- match(spain_dt$provlab, fh_model$ind$Domain)
+domain_ord <- match(shp_dt[[area_vars[1]]], fh_model$ind$Domain)
 
 ## Create the mapping table based on the order obtained above
 map_tab <- data.frame(pop_data_id = fh_model$ind$Domain[domain_ord],
-                      shape_id = spain_dt$provlab)
+                      shape_id = shp_dt[[area_vars[1]]])
 
 ## Create map
-map_plot(object = fh_model, MSE = TRUE, map_obj = spain_dt,
- map_dom_id = "provlab", map_tab = map_tab)
+map_plot(object = fh_model, MSE = TRUE, map_obj = shp_dt,
+ map_dom_id = area_vars[1], map_tab = map_tab)
 
 ```
 
