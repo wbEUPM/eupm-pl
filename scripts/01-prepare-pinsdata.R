@@ -13,6 +13,13 @@ income_dt <- readRDS("data/raw/example-data/incomedata_survey.RDS")
 
 rhs_dt <- readRDS("data/raw/example-data/simadmin.RDS")
 
+shp_dt <- readRDS("data/raw/geometries/spainshape.RDS")
+
+shp_dt <- 
+  shp_dt |>
+  st_as_sf(crs = 4326, agr = "constant") |>
+  dplyr::select(prov, provlab)
+
 #### lets simulate enumeration areas into the data
 set.seed(123)  # For reproducibility
 
@@ -76,7 +83,10 @@ bd_out |>
 
 write.csv(rhs_dt, "data/clean-example/sae_data.csv")
 
-
+bd_out |>
+  pin_write(x = shp_dt,
+            name = "geometries",
+            type = "rds")
 
 
 
