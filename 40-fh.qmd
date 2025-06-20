@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 pak_list <- c("sf", "data.table", "tidyverse", "car", 
               "sae", "survey", "spdep", "knitr", "MASS", "caret",
               "caret", "purrr", "pins", "gt",  "scales",
-              "viridis", "emdi")
+              "viridis", "emdi", "rlang")
 
 sapply(pak_list,
        library,
@@ -44,6 +44,7 @@ root_clean <- "./data/clean-example"
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
+bd_out <- board_folder("data/clean-example", versioned = TRUE)
 
 ```
 
@@ -319,7 +320,7 @@ fh_step <- step_wrapper_fh(dt = fh_dt,
                            xvars = candidate_vars,
                            y = "direct_povrate",
                            cor_thresh = 0.8,
-                           criteria = "AIC",
+                           criteria = "BIC",
                            vardir = "vardir", 
                            transformation = "arcsin", 
                            eff_smpsize = "n_eff")
@@ -332,6 +333,7 @@ print(fh_step$fixed)
 In this example, we use the function `fh` to calculate the FH estimates. Because we want to estimate a ratio, we need to apply the arcsin transformation to guarantee that the results lie between 0 and 1. For that, we choose "arcsin" as `transformation`, and a bias-corrected `backtransformation` ("bc"). Additionally, the effective sample size, which equals the sample size of each area divided by the design effect, is needed for the arcsin transformation. We set the `MSE` estimation to `TRUE`, the `mse_type` to "boot" (necessary for the type of transformation) and determine the number of bootstrap iterations. For practical applications, values larger than 200 are recommended. In case, no transformation is desired, the `transformation` argument must be set to "no" and the inputs `backtransformation` and `eff_smpsize` are no longer needed.
 
 ```{r model_est, message = FALSE, warning = FALSE}
+set.seed(123)
 fh_model <- fh(fixed = formula(fh_step$fixed),
                vardir = "vardir", 
                combined_data = fh_dt, 
@@ -358,7 +360,7 @@ With the help of the `summary` method of `emdi`, we gain detailed insights into 
 summary(fh_model)
 ```
 
-We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains belong to the domains with 0 direct and variance estimates that we set to `NA` in the beginning. The variance of the random effects equals 7.643268e-05. All of the included auxiliary variables are significant on a 0.05 significance level and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.71. The results of the Shapiro-Wilk-test indicate that normality is not rejected for the standardized residuals.
+We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains belong to the domains with 0 direct and variance estimates that we set to `NA` in the beginning. The variance of the random effects equals 0.001516632. All of the included auxiliary variables are significant on a 0.05 significance level and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.74. The results of the Shapiro-Wilk-test indicate that normality is not rejected for the standardized residuals.
 
 ### Diagnostic plots
 
@@ -368,7 +370,7 @@ We produce normal quantile-quantile (Q-Q) plots of the standardized realized res
 plot(fh_model)
 ```
 
-The plots show slight deviations of the distributions from normality.
+The plots show slight deviations of the distributions from normality. The normality assumption is not required for the computation of the FH estimates, but at the obtained MSE estimates we have to look with some care when the normality assumption does not hold.
 
 ## Comparison of the FH results with the direct estimates.
 
@@ -382,7 +384,7 @@ compare(fh_model)
 
 ```
 
-The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.63) between the direct and FH estimates.
+The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.66) between the direct and FH estimates.
 
 If the result of the model assessment is not satisfactory, the following should be checked again: Can the direct estimation including variance estimation be improved? Are there further auxiliary variables and/or must possible interaction effects be taken into account? Does a (different) transformation need to be used?
 
@@ -413,8 +415,19 @@ head(fh_bench$ind)
 Create one dataframe that contains the direct and FH estimation results including MSE and CV results.
 
 ```{r res_prep, message = FALSE, warning = FALSE}
-results <-as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
-head(results)
+pov_fh <- as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
+head(pov_fh)
+
+pov_fh <- pov_fh |>
+  rename(!!area_vars[1] := "Domain") |>
+  mutate(year = singleyear)
+
+bd_out |>
+  pin_write(x = pov_fh,
+            name = "pov_fh",
+            type = "rds")
+
+write.csv(pov_fh, "data/clean-example/pov_fh.csv")
 ```
 
 ### Poverty map
@@ -442,6 +455,8 @@ map_plot(object = fh_model, MSE = TRUE, map_obj = shp_dt,
 
 ```{r save, message = FALSE, warning = FALSE, eval = FALSE}
 save.image("fh_estimation.RData")
+### save the data to pin board
+
 ```
 
 ### Export the model output and estimation results.
