@@ -84,13 +84,13 @@ In this example, we use a synthetic data set adapted from R package `sae` called
 
 For this exercise, we use a random 10% sample of the `incomedata` to estimate the poverty rates. For the univariate case, we use the income variable from 2012.
 
-The FH estimation process relies on 3 types of data: 
+The FH estimation process relies on 3 types of data:
 
 (1) The data containing the outcome variable from which direct estimates will be computed. This is a usually a survey dataset for each year of data including outcome variable (such as income or welfare aggregates), weights, cluster identifiers (i.e. if available, psu or enumeration areas) at the unit level i.e. individual or household. In this example, we call this: `survey_dt`.
 
 (2) A dataset containing for the right hand side (RHS) variables i.e. indicator estimates representative at the level of the target area. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id and variables of interest. In this example, we call this `rhs_dt`.
 
-(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`. 
+(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`.
 
 ```{r load-data, message = FALSE, warning = FALSE}
 
@@ -113,7 +113,7 @@ shp_dt <-
 
 ```
 
-Below is what our datasets look like. These are generally the variables  
+Below is what our datasets look like. These are generally the variables
 
 ```{r}
 
@@ -121,7 +121,8 @@ survey_dt |>
   glimpse()
 
 ```
-`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level. 
+
+`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
 
 ```{r}
 
@@ -129,8 +130,8 @@ rhs_dt |>
   glimpse()
 
 ```
-``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`. 
 
+\``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
 ```{r}
 
@@ -138,9 +139,11 @@ shp_dt |>
   glimpse()
 
 ```
-`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`. 
 
-A quick summary table on the data needs for the UFH model: 
+`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
+
+A quick summary table on the data needs for the UFH model:
+
 ```{r, echo = FALSE}
 
 # Create the table content
@@ -185,7 +188,6 @@ fh_table %>%
   fmt_markdown(columns = everything())
 
 ```
-
 
 ### Direct estimation
 
@@ -255,8 +257,7 @@ direct_dt <- direct_dt[complete.cases(direct_dt), ]
 
 ```
 
-
-Here is what the results look like: 
+Here is what the results look like:
 
 ```{r}
 
@@ -287,7 +288,6 @@ direct_dt <-
     .names = "{.col}"
   ))
 ```
-
 
 Thus far, we have careful set up the types of data we require for the FH model. We only need to combine the dataframe containing the direct estimates and their variances with the auxiliary variables.
 
@@ -326,11 +326,11 @@ fh_step <- step_wrapper_fh(dt = fh_dt,
                            eff_smpsize = "n_eff")
 
 ```
+
 ```{r remove_multicol1, message = FALSE, warning = FALSE}
 # Resulting model formula
 print(fh_step$fixed)
 ```
-
 
 ## Model estimation of FH point and their MSE estimates.
 

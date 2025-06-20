@@ -465,7 +465,6 @@ toc()
 
 # multivariate FH 2
 tic(msg = "eblupMFH2")
-set.seed()
 model2_obj <- eblupMFH2(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 1e10, PRECISION = 0.01)
 bd_out |> pin_write(model2_obj, type = "rds")
 toc()
@@ -487,10 +486,8 @@ To assess whether a linear regression model may be incorrectly specified — for
 
 We implement Ramsey’s RESET test in R using the resettest() function from the lmtest package:
 
-```{r}
+```{r lin-test}
 #| echo: true
-
-
 ### lets create a dataframe with the errors and estimated poverty rates
 
 eblup_dt <- model2_obj$eblup
@@ -563,7 +560,7 @@ We use the shapiro wilks test of normality using the `shapiro.test()` function i
 
 First, we perform the shapiro wilks normality test on the model errors, $\varepsilon$. We show both the normality distribution histogram as well as the qqplots as below:
 
-```{r}
+```{r sw-test}
 #| echo: true
 
 
@@ -761,8 +758,10 @@ mfh_dt |>
 
 Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation.
 
-```{r, fig.width = 14, fig.height = 20}
+```{r}
 #| echo: true
+#| fig-width: 15
+#| fig-height: 20
 
 numeric_cols <- sapply(model2pov_dt, is.numeric)
 model2pov_dt_clean <- model2pov_dt[complete.cases(model2pov_dt[, numeric_cols]) &
@@ -872,14 +871,16 @@ Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well a
 #| echo: true
 #| eval: false
 set.seed(123)
+tic(pbmcpeMFH2)
 mcpemfh2_obj <- 
   pbmcpeMFH2(formula = mfh_formula,
            vardir = varcols,
-           nB = 10,
+           nB = 50,
            data = mfh_dt, 
            MAXITER = 1e10, 
            PRECISION = 1e-2)
-bd_clean |> pin_write("mcpemfh2_obj")
+bd_clean |> pin_write(mcpemfh2_obj, type = "rds")
+toc()
 ```
 
 ```{r pbmcpeMFH2-load}
@@ -935,15 +936,10 @@ compare_mfh2 <- function(period_list = c(1,2),
 The above function takes the difference between any two time periods and prepares a table of differences for each area include the MCPE estimated error rates as well as lower and upper bounds given a specified confidence level. See the function implemented to compare periods 1 and 2 (years 2012 and 2013)
 
 ```{r}
-
 #| echo: true
-
 comp12_obj <- compare_mfh2()
-
 comp23_obj <- compare_mfh2(period_list = c(2, 3))
-
 comp13_obj <- compare_mfh2(period_list = c(1, 3))
-
 ```
 
 See the plots below
