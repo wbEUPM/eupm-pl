@@ -36,7 +36,7 @@ This project relies on the `renv` R package to ensure that the same version of a
 
 ### Principals of data storage
 
-To save data, we rely on R (pins.rstudio.com)\[https://pins.rstudio.com/\], which enable keeping a history of the data changes on the local folder structure.
+To save data, we rely on R (pins.rstudio.com)[https://pins.rstudio.com], which enable keeping a history of the data changes on the local folder structure.
 
 ### Data reload from the API
 
