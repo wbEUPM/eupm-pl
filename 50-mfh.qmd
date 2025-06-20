@@ -21,22 +21,34 @@ knitr::opts_chunk$set(
   error = FALSE
 )
 
-pak_list <- c("sf", "data.table", "tidyverse", "car", "msae",
-              "sae", "survey", "spdep", "knitr", "MASS", "caret",
-              "caret", "purrr", "pins", "gt", "lmtest", "scales",
-              "viridis", "patchwork")
-
-invisible(sapply(pak_list, 
-                 library, 
-                 character.only = TRUE))
-
-
-
+pacman::p_load(
+  sf, 
+  data.table, 
+  tidyverse, 
+  car, 
+  msae,
+  sae, 
+  survey, 
+  spdep,
+  knitr, 
+  MASS, 
+  caret,
+  purrr,
+  pins,
+  gt,
+  lmtest, 
+  scales,
+  viridis, 
+  patchwork,
+  dplyr, 
+  tictoc,
+  gt,
+  matrixcalc
+  )
 
 # Loading locally-developed
 list.files("R", pattern = "*.R$", full.names = TRUE, ignore.case = TRUE) |>
   walk(~ suppressMessages(source(.x)))
-
 
 # Raw data root
 root_raw <- "./data/raw"
@@ -47,7 +59,7 @@ root_clean <- "./data/clean-example"
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
-
+bd_out <- "output/res-50-mfh" |> board_folder(versioned = T)
 ```
 
 # Stable FH Estimators over T time periods: The Multivariate Fay Herriot Modelling Approach
@@ -94,59 +106,36 @@ The MFH estimation process relies on 3 types of data:
 
 (3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`
 
-```{r load-data, message = FALSE, warning = FALSE, echo = TRUE}
-
-### lets read in our 3 aforementioned datasets
-
-survey_dt <- 
-  bd_clean |>
-  pin_read("pov_direct")
-  
-
-rhs_dt <- 
-  bd_clean |>
-  pin_read("sae_data")
-
-shp_dt <- 
-  bd_clean |>
-  pin_read("geometries")
-
-
+```{r dta-load}
+#| echo: true
+survey_dt <- bd_clean |> pin_read("pov_direct")
+rhs_dt <- bd_clean |> pin_read("sae_data")
+shp_dt <- bd_clean |> pin_read("geometries")
 ```
 
 Below is what our datasets look like. These are generally the variables
 
-```{r, echo = TRUE}
-
-survey_dt |>
-  glimpse()
-
+```{r}
+survey_dt |> glimpse()
 ```
 
 `survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
 
-```{r, echo = TRUE}
-
-rhs_dt |>
-  glimpse()
-
+```{r}
+rhs_dt |> glimpse()
 ```
 
 \``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
-```{r, echo = TRUE}
-
-shp_dt |>
-  glimpse()
-
+```{r}
+shp_dt |> glimpse()
 ```
 
 `shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
 
 A quick summary table on the data needs for the MFH model:
 
-```{r, echo = TRUE}
-
+```{r}
 # Create the table content
 mfh_table <- tibble::tibble(
   Dataset = c("`survey_dt`", "`rhs_dt`", "`shp_dt`"),
@@ -186,7 +175,6 @@ mfh_table %>%
     heading.align = "left"
   ) %>%
   fmt_markdown(columns = everything())
-
 ```
 
 For ease of use of this tutorial, make sure the variable names match as described across the datasets i.e. use the same target area variables and year variable name across all 3 datasets.
@@ -199,29 +187,24 @@ We will use the direct HT estimators that use the survey weights in `weight` var
 
 The goal is simply to apply the poverty line to the
 
-```{r, echo = TRUE}
+```{r dir-est-setup}
+#| echo: true
 
 ### a little bit of housekeeping to ensure ease of access 
 area_vars <- c("prov", "provlab") ### both variables are at the same level. if the levels vary, you would need to combine both variables for effect use
 
 cluster_var <- "ea_id"
-
 weight_var <- "weight"
-
 year_var <- "year"
-
 outcome_var <- "income"
-
 povline_var <- "povline"
 
 candidate_vars <- colnames(rhs_dt)[!colnames(rhs_dt) %in% c(area_vars, year_var)]
 
 ### quickly compute the sample size for each province
-sampsize_dt <- 
-  survey_dt |>
+sampsize_dt <- survey_dt |>
   group_by(!!!syms(area_vars), !!sym(year_var)) |>
   summarize(N = n(), .groups = "drop")
-  
 
 ## the poverty line for each is already included within the data. 
 ## Lets compute the direct estimates for each year of data and create a list of data.frames (equal in length to the number of years) 
@@ -241,21 +224,18 @@ direct_dt <-
 Here is what the results look like:
 
 ```{r, echo = TRUE}
-
 direct_dt
-
 ```
 
 ### Computing the Variance-Covariance Matrix for the Sampling Error of the Direct Estimate
 
 Next, we quickly estimate the sample variance and covariance for the direct estimator using the survey R package as below. We apply the `compute_vcov()` function which we have created as a wrapper on the `survey::svymean()` and `survey::svyvar()` functions to estimate the variance covariance matrix.
 
-```{r, echo = TRUE}
-
+```{r dir-est-pov}
+#| echo: true
 survey_dt <- 
   survey_dt |>
-  mutate(pov_indicator = ifelse(income < povline, 1, 0))
-
+  mutate(pov_indicator = ifelse(!!sym(outcome_var) < !!sym(povline_var), 1, 0))
 
 ### we need to reconstruct the variables from long to wide for this
 ### this wide format will also be useful for estimating the MFH model as well 
@@ -271,10 +251,7 @@ widesurvey_dt <-
     values_fn = first
   )
 
-
-
 #### now we are ready to compute the variance covariance matrix
-
 ### notice that we have to specify the new column names for the pov_indicator variables as they recreated in widesurvey_dt
 var_dt <- 
   compute_vcov(dt = widesurvey_dt,
@@ -284,7 +261,7 @@ var_dt <-
                yvars = paste0("pov_indicator", unique(survey_dt[[year_var]]))) 
 
 var_dt <- 
-var_dt |>
+  var_dt |>
   rename(!!sym(area_vars[[1]]) := "domain") ### quick rename the domain variable to match our area_vars
 
 ### lets merge in our sample sizes
@@ -294,8 +271,6 @@ var_dt <-
           dplyr::select(!!sym(area_vars[1]), "N") |>
           unique(), 
         by = area_vars[[1]])
-
-
 ```
 
 It is noteworthy that the `var_dt` object is estimated at the level of the target area. Hence, for reasons that will be made self-evident later, the `var_dt` is not a matrix for each area rather the matrix is stored rowwise.
@@ -306,13 +281,8 @@ A quick inspection of the preceding results will show some provinces contain low
 
 The goal now is to use the above `varsmoothie_king()` function to add additional columns of smoothed variances into our `var_dt` object.
 
-```{r, message = FALSE, warning = FALSE}
-
-#| warning: false
-#| message: false
-#| error: false
+```{r dir-est-var-smooth}
 #| echo: true
-
 
 varcols <- grep("^v_", names(var_dt), value = TRUE) ## the column names for the variance covariance matrix
 
@@ -386,18 +356,15 @@ Here is what the data looks like:
 
 ```{r}
 #| echo: true
-
-mfh_dt |>
-  glimpse()
+mfh_dt |> glimpse()
 ```
 
 ### Variable Selection Process
 
 Next, we apply a simple variable selection process which employs the stepwise regression algorithm using the AIC selection criteria as in described by [@yamashita2007stepwise]. The function `step_wrapper()` implemented below is a wrapper to the `stepAIC()` function carries all the perfunctory cleaning necessary use the `stepAIC()` function. This includes dropping columns that are entirely missing (`NA`) and keep only complete cases/observations and remove perfectly or near collinear variables and combinations using the variance inflation method.
 
-```{r}
+```{r var-selection}
 #| echo: true
-
 candidate_vars <- 
   expand.grid(var = candidate_vars,
               year = unique(survey_dt[[year_var]])) |>
@@ -469,7 +436,7 @@ mfh_formula <-
 
   },
   x = paste0("direct_povrate", unique(survey_dt[[year_var]])),
-  rhs = fh_step,
+  rhs = fh_step |> map(~.x[1:3]),
   SIMPLIFY = FALSE)
 
 ### here is what the 3 equations look like
@@ -481,16 +448,33 @@ mfh_formula
 
 Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
 
-```{r}
+```{r mvfh-est}
 #| echo: true
+#| eval: false
+mfh_dt1 <- mfh_dt |> mutate(across(contains("v_pov_"), ~ 0.1)) |> as_tibble()
 
-
-#### now we estimate the model of the univariate models as well as the multivariate fay herriot models 1 and 2
-
+# univariate FH
 model0_obj <- eblupUFH(mfh_formula, vardir = varcols, data = mfh_dt)
-model1_obj <- eblupMFH1(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 1e10, PRECISION = 1e-2)
-model2_obj <- eblupMFH2(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 1e10, PRECISION = 1e-2)
+bd_out |> pin_write(model0_obj, type = "rds")
 
+# multivariate FH 1
+tic(msg = "eblupMFH1")
+model1_obj <- eblupMFH1(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 10000, PRECISION = 0.01)
+bd_out |> pin_write(model1_obj, type = "rds")
+toc()
+
+# multivariate FH 2
+tic(msg = "eblupMFH2")
+set.seed()
+model2_obj <- eblupMFH2(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 1e10, PRECISION = 0.01)
+bd_out |> pin_write(model2_obj, type = "rds")
+toc()
+```
+
+```{r mvfh-load}
+model0_obj <- bd_out |> pin_read("model0_obj")
+model1_obj <- bd_out |> pin_read("model1_obj")
+model2_obj <- bd_out |> pin_read("model2_obj")
 ```
 
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
@@ -515,9 +499,7 @@ mse_dt <- model2_obj$MSE
 colnames(eblup_dt) <- paste0("eblup_", colnames(eblup_dt))
 colnames(mse_dt) <- paste0("mse_", colnames(mse_dt))
 
-reset_dt <- 
-  bind_cols(eblup_dt, 
-            mse_dt)
+reset_dt <- bind_cols(eblup_dt, mse_dt) |> as_tibble()
   
 ### lets perform the reset test on the pairs of variables as appropriate i.e. poverty = B0 + B1*MSE
 
@@ -543,7 +525,24 @@ test_list <-
     
   })
 
-
+reset_dt2 <- 
+  reset_dt |> 
+  mutate(id = row_number()) |> 
+  pivot_longer(c(contains("eblup"), contains("mse"))) |> 
+  mutate(
+    year = str_extract(name, "\\d{4}") |> as.numeric(),
+    var =  str_extract(name, "eblup|mse")
+  ) |> 
+  dplyr::select(-name) |> 
+  pivot_wider(names_from = var, values_from = value )
+  
+reset_dt2 |> 
+  ggplot() + 
+  aes(x = eblup, y = mse) + 
+  geom_point() + 
+  facet_wrap(. ~ year) + 
+  geom_smooth() + 
+  theme_bw()
 
 ```
 
@@ -551,9 +550,7 @@ Here is what the results look like:
 
 ```{r}
 #| echo: true
-test_list %>%
-  lapply(X = .,
-         FUN = summary)
+test_list %>% lapply(X = ., FUN = summary)
 ```
 
 The results particularly for the final 2 years indicate that we might need to retransform the variables in the model as there are potentially non linear relationships which our model is not capturing. Perhaps creating higher order polynomials and other variable transformations of our right hand side variables reduce the error rates within the model.
@@ -871,25 +868,28 @@ Next we will assume our model errors were normally distributed in order to show 
 
 Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well as, the MSEs of the EBLUPs for each time point, and the MCPEs for each pair of time points based on the MFH model 2 as follows:
 
-```{r}
+```{r pbmcpeMFH2-est}
 #| echo: true
-#| fig-width: 15
-#| fig-height: 20
-
+#| eval: false
 set.seed(123)
-
 mcpemfh2_obj <- 
-pbmcpeMFH2(formula = mfh_formula,
+  pbmcpeMFH2(formula = mfh_formula,
            vardir = varcols,
            nB = 10,
            data = mfh_dt, 
            MAXITER = 1e10, 
            PRECISION = 1e-2)
+bd_clean |> pin_write("mcpemfh2_obj")
+```
 
+```{r pbmcpeMFH2-load}
+mcpemfh2_obj <- bd_clean |> pin_read("mcpemfh2_obj")
+```
+
+```{r}
 
 #' A function to compare and plot differences from the mcpe object
 #' 
-
 compare_mfh2 <- function(period_list = c(1,2),
                          mcpe_obj = mcpemfh2_obj,
                          alpha = 0.05){
@@ -930,8 +930,6 @@ compare_mfh2 <- function(period_list = c(1,2),
               plot = p1))
   
 }
-
-
 ```
 
 The above function takes the difference between any two time periods and prepares a table of differences for each area include the MCPE estimated error rates as well as lower and upper bounds given a specified confidence level. See the function implemented to compare periods 1 and 2 (years 2012 and 2013)
@@ -951,55 +949,39 @@ comp13_obj <- compare_mfh2(period_list = c(1, 3))
 See the plots below
 
 ```{r}
-#| echo: true
-
 comp12_obj$plot
-
 comp23_obj$plot
-
 comp13_obj$plot
-
-
 ```
 
 See the data created
 
-- Comparing the years 2012 and 2013
+-   Comparing the years 2012 and 2013
+
 ```{r}
 #| echo: true
-
-comp12_obj$df %>%
-  head() %>%
-  kable()
-
+comp12_obj$df %>% head() %>% kable()
 ```
 
-- Comparing the years 2013 and 2014
-```{r, echo = TRUE}
-#| echo: true
+-   Comparing the years 2013 and 2014
 
-comp23_obj$df %>%
-  head() %>%
-  kable()
-
-```
-
-- Comparing the years 2012 and 2014
 ```{r}
 #| echo: true
+comp23_obj$df %>% head() %>% kable()
+```
 
-comp13_obj$df %>%
-  head() %>%
-  kable()
+-   Comparing the years 2012 and 2014
 
-
+```{r}
+#| echo: true
+comp13_obj$df %>% head() %>% kable()
 ```
 
 ### Presenting Results
 
 Now that we have estimated the MFH models and run some diagnostics, we might be interested in the following:
 
-- presenting some poverty maps
+-   presenting some poverty maps
 
 ```{r}
 #| echo: true
@@ -1039,7 +1021,7 @@ lapply(X = unique(survey_dt[[year_var]]),
 
 ```
 
-- quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
+-   quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
 
 ```{r}
 #| echo: true
