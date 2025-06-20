@@ -84,14 +84,15 @@ Metadata was prepared for each variable at the time of the raw data collection. 
 meta_groups <-
   root_raw |> file.path("pl-metadata.xlsx") |> readxl::read_xlsx(sheet = "pl") |> 
   fill(Category) |> 
-  select(Category, id_indicator, Indicator, Source, Metadata, `Link to Source`)
+  dplyr::select(Category, id_indicator, Indicator, Source, Metadata, `Link to Source`)
 
 meta_vars <- 
   root_raw |> file.path("pl-metadata.xlsx") |> readxl::read_xlsx(sheet = "pl-index") |> 
   fill(id_indicator, Indicator) |> 
   mutate(across(c(Indicator, var_name), ~ as_factor(.)))
 
-geoms <- bd_aux |> pin_read("geometries")
+geoms <- bd_clean |> pin_read("geometries")
+geoms <- geoms$`2023`
 ```
 
 ## Preparing poverty ralated variables (TBD)

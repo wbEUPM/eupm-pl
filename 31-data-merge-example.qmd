@@ -1,0 +1,135 @@
+---
+title: "Preparing examplary data for poverty mapping"
+format: 
+  html:
+    fig-width: 9
+    fig-height: 5
+    fig-dpi: 300
+editor: source
+params:
+  eval_all: FALSE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=FALSE}
+# Recollect data from the sources?
+if ("try-error" %in% class(try({params$eval_all}, silent = TRUE)))
+  params <- list(eval_all = FALSE, harvest = FALSE)
+```
+
+```{r}
+#| label: setup
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+
+# Libraries
+pak_list <- c("pins", "sf", "data.table", "tidyverse", 
+              "car", "msae", "sae", "survey", "spdep",
+              "knitr", "MASS", "caret")
+
+sapply(pak_list,
+       library,
+       character.only = TRUE)
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
+
+# Loading locally-developed
+list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
+  walk(source)
+
+# Raw data root
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean-example"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+```
+
+
+## Geometries
+
+Structure:
+
+-   `id` integer or character id of the polygon. Unique across admin levels
+-   `name` name of the admin level
+-   `geometry` geometrical boundaries. Make sure to make them valid and relatively simple.
+
+```{r}
+
+# bd_clean |> pin_write(XXXX, name = "geometries", type = "rds")
+```
+
+# Example data
+
+To prepare the area-level variables, (direct estimates of poverty, variances, all SE, and covariances, as well as the RHS variables, one needs to clean all this data to a single structure wide-format with following columns:
+
+-   id: unique identifiers
+-   year: year of the observation
+-   var1, var2, var2, where these are variables with their unique, self-explaining names 
+
+Please note that variable names should be documented somewhere. 
+
+Please save data in the board `bd_clean` under two (or more) different pins, for example: 
+
+-   `sae_data` for RHS variables
+-   `pov_direct` for the direct estimates, variances, covariances, etc.
+
+```{r eval=TRUE}
+
+rhs_dt <- readRDS("data/clean/sae_data/20250417T120832Z-1280a/sae_data.rds")
+
+### keep on the NUTS 3 since this is the target area of interest
+rhs_dt <- 
+  rhs_dt |>
+  filter(level == "NUTS 3") 
+
+
+### quick transformation into log scale to reduce the risk of convergence issues 
+
+idvars_list <- c("id", "year", "level")
+
+# first get the set of candidate variables
+candidate_vars <- colnames(rhs_dt)[!colnames(rhs_dt) %in% idvars_list]
+
+# replace all the missing variables with 1 and then take the log
+rhs_dt <- 
+  rhs_dt %>%
+  mutate(across(all_of(candidate_vars), 
+                ~ replace_na(., 1), 
+                .names = "{.col}"),
+         across(all_of(candidate_vars), 
+                ~ log(.), 
+                .names = "log_{.col}")) 
+
+
+```
+
+## Direct poverty estimates
+
+```{r}
+
+# bd_clean |> pin_write(df_out, name = "pov_direct", type = "rds")
+
+
+
+```
+
+## Right-hand side varaibles
+
+```{r dt-lfs-load}
+
+# bd_clean |> pin_write(XXXX, name = "sea_data", type = "rds")
+```
+
