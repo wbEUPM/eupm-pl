@@ -13,7 +13,7 @@ income_dt <- readRDS("data/raw/example-data/incomedata_survey.RDS")
 
 rhs_dt <- readRDS("data/raw/example-data/simadmin.RDS")
 
-shp_dt <- readRDS("data/raw/geometries/spainshape.RDS")
+shp_dt <- readRDS("data/raw/example-data/spainshape.RDS")
 
 shp_dt <- 
   shp_dt |>
