@@ -26,14 +26,17 @@ pak_list <- c("sf", "data.table", "tidyverse", "car", "msae",
               "caret", "purrr", "pins", "gt", "lmtest", "scales",
               "viridis")
 
-sapply(pak_list,
-       library,
-       character.only = TRUE)
+invisible(sapply(pak_list, 
+                 library, 
+                 character.only = TRUE))
+
+
 
 
 # Loading locally-developed
-list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
-  walk(source)
+list.files("R", pattern = "*.R$", full.names = TRUE, ignore.case = TRUE) |>
+  walk(~ suppressMessages(source(.x)))
+
 
 # Raw data root
 root_raw <- "./data/raw"
@@ -91,7 +94,7 @@ The MFH estimation process relies on 3 types of data:
 
 (3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`
 
-```{r load-data, message = FALSE, warning = FALSE}
+```{r load-data, message = FALSE, warning = FALSE, echo = TRUE}
 
 ### lets read in our 3 aforementioned datasets
 
@@ -113,7 +116,7 @@ shp_dt <-
 
 Below is what our datasets look like. These are generally the variables
 
-```{r}
+```{r, echo = TRUE}
 
 survey_dt |>
   glimpse()
@@ -122,7 +125,7 @@ survey_dt |>
 
 `survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
 
-```{r}
+```{r, echo = TRUE}
 
 rhs_dt |>
   glimpse()
@@ -131,7 +134,7 @@ rhs_dt |>
 
 \``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
-```{r}
+```{r, echo = TRUE}
 
 shp_dt |>
   glimpse()
@@ -142,7 +145,7 @@ shp_dt |>
 
 A quick summary table on the data needs for the MFH model:
 
-```{r}
+```{r, echo = TRUE}
 
 # Create the table content
 mfh_table <- tibble::tibble(
@@ -196,7 +199,7 @@ We will use the direct HT estimators that use the survey weights in `weight` var
 
 The goal is simply to apply the poverty line to the
 
-```{r}
+```{r, echo = TRUE}
 
 ### a little bit of housekeeping to ensure ease of access 
 area_vars <- c("prov", "provlab") ### both variables are at the same level. if the levels vary, you would need to combine both variables for effect use
@@ -237,7 +240,7 @@ direct_dt <-
 
 Here is what the results look like:
 
-```{r}
+```{r, echo = TRUE}
 
 direct_dt
 
@@ -247,7 +250,7 @@ direct_dt
 
 Next, we quickly estimate the sample variance and covariance for the direct estimator using the survey R package as below. We apply the `compute_vcov()` function which we have created as a wrapper on the `survey::svymean()` and `survey::svyvar()` functions to estimate the variance covariance matrix.
 
-```{r}
+```{r, echo = TRUE}
 
 survey_dt <- 
   survey_dt |>
@@ -308,6 +311,7 @@ The goal now is to use the above `varsmoothie_king()` function to add additional
 #| warning: false
 #| message: false
 #| error: false
+#| echo: true
 
 
 varcols <- grep("^v_", names(var_dt), value = TRUE) ## the column names for the variance covariance matrix
@@ -346,6 +350,7 @@ Now, you can replace the zero/near zero sample size area MSEs with their smoothe
 Thus far, we have careful set up the types of data we require for the MFH model. One final step of variable preparation is necessary to use the `eblupUFH` and `eblupMFH` functions. This requires that we reshape the set of candidate variables dataset i.e. the `rhs_dt` object into wide format. We will also have to reshape our direct estimates and merge this into `rhs_dt` as well as `var_dt`. All the data we have created thus far needs to be placed together ultimately for the EBLUP estimation.
 
 ```{r}
+#| echo: true
 
 ## reshaping the rhs_dt from long to wide
 widerhs_dt <- 
@@ -380,6 +385,7 @@ mfh_dt <-
 Here is what the data looks like:
 
 ```{r}
+#| echo: true
 
 mfh_dt |>
   glimpse()
@@ -390,6 +396,7 @@ mfh_dt |>
 Next, we apply a simple variable selection process which employs the stepwise regression algorithm using the AIC selection criteria as in described by [@yamashita2007stepwise]. The function `step_wrapper()` implemented below is a wrapper to the `stepAIC()` function carries all the perfunctory cleaning necessary use the `stepAIC()` function. This includes dropping columns that are entirely missing (`NA`) and keep only complete cases/observations and remove perfectly or near collinear variables and combinations using the variance inflation method.
 
 ```{r}
+#| echo: true
 
 candidate_vars <- 
   expand.grid(var = candidate_vars,
@@ -438,7 +445,7 @@ mfh_formula <-
 Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
 
 ```{r}
-
+#| echo: true
 
 ## replace the variances-covariances that are zero or near zero with their smoothed counterparts
 mfh_dt <- 
@@ -468,6 +475,8 @@ To assess whether a linear regression model may be incorrectly specified — for
 We implement Ramsey’s RESET test in R using the resettest() function from the lmtest package:
 
 ```{r}
+#| echo: true
+
 
 ### lets create a dataframe with the errors and estimated poverty rates
 
@@ -512,7 +521,7 @@ test_list <-
 Here is what the results look like:
 
 ```{r}
-
+#| echo: true
 test_list %>%
   lapply(X = .,
          FUN = summary)
@@ -529,6 +538,8 @@ We use the shapiro wilks test of normality using the `shapiro.test()` function i
 First, we perform the shapiro wilks normality test on the model errors, $\varepsilon$. We show both the normality distribution histogram as well as the qqplots as below:
 
 ```{r}
+#| echo: true
+
 
 ### first lets replace the negative values with 0
 eblup_dt[eblup_dt < 0] <- 0
@@ -594,7 +605,7 @@ resid_dt %>%
 Likewise, we test the normality of the random effect variable
 
 ```{r}
-
+#| echo: true
 
 #### For the random effects
 raneff_dt <- as.data.frame(model2_obj$randomEffect)
@@ -647,6 +658,7 @@ Next, we will show the benefits of small area estimation over direct estimation
 ### Comparing Direct Estimation to Multivariate Model Outputs
 
 ```{r, warning=FALSE, message = FALSE, error = FALSE}
+#| echo: true
 
 model2mse_dt <- 
   model2_obj$MSE |>
@@ -729,7 +741,8 @@ mfh_dt |>
 
 Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation.
 
-```{r}
+```{r, fig.width = 14, fig.height = 20}
+#| echo: true
 
 numeric_cols <- sapply(model2pov_dt, is.numeric)
 model2pov_dt_clean <- model2pov_dt[complete.cases(model2pov_dt[, numeric_cols]) &
@@ -771,6 +784,10 @@ ggplot(model2pov_dt_clean, aes(x = .data[[year_var]])) +
 The other advantage of MFH estimation is the smoothing of the model estimates over the unit variate model. We can show this below as well:
 
 ```{r}
+#| echo: true
+#| fig-width: 15
+#| fig-height: 20
+
 
 model2pov_dt[[year_var]] <- as.factor(model2pov_dt[[year_var]])
 
@@ -803,7 +820,7 @@ ggplot(model2pov_dt, aes(x = .data[[year_var]])) +
              shape = 1, size = 1.5) +
   facet_wrap(vars(.data[[area_vars[[1]]]]), scales = "free_y") +
   scale_y_continuous(
-    name = "Coefficient of Variation (CV)",
+    name = "Poverty Rates",
     sec.axis = sec_axis(~ . * max_n, name = "Sample Size (N)")
   ) +
   scale_color_manual(values = c("UFH Poverty" = "darkorange",
@@ -832,6 +849,9 @@ Next we will assume our model errors were normally distributed in order to show 
 Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well as, the MSEs of the EBLUPs for each time point, and the MCPEs for each pair of time points based on the MFH model 2 as follows:
 
 ```{r}
+#| echo: true
+#| fig-width: 15
+#| fig-height: 20
 
 set.seed(123)
 
@@ -893,6 +913,7 @@ The above function takes the difference between any two time periods and prepare
 
 ```{r}
 
+#| echo: true
 
 comp12_obj <- compare_mfh2()
 
@@ -905,7 +926,7 @@ comp13_obj <- compare_mfh2(period_list = c(1, 3))
 See the plots below
 
 ```{r}
-
+#| echo: true
 
 comp12_obj$plot
 
@@ -918,7 +939,9 @@ comp13_obj$plot
 
 See the data created
 
+- Comparing the years 2012 and 2013
 ```{r}
+#| echo: true
 
 comp12_obj$df %>%
   head() %>%
@@ -926,7 +949,9 @@ comp12_obj$df %>%
 
 ```
 
-```{r}
+- Comparing the years 2013 and 2014
+```{r, echo = TRUE}
+#| echo: true
 
 comp23_obj$df %>%
   head() %>%
@@ -934,7 +959,9 @@ comp23_obj$df %>%
 
 ```
 
+- Comparing the years 2012 and 2014
 ```{r}
+#| echo: true
 
 comp13_obj$df %>%
   head() %>%
@@ -947,9 +974,11 @@ comp13_obj$df %>%
 
 Now that we have estimated the MFH models, we might be interested in the following:
 
--   quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
+- 
+- quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
 
 ```{r}
+#| echo: true
 
 ### lets work with our shapefile
 longpov_dt <- 
@@ -989,6 +1018,7 @@ longpov_dt |>
 Lets plot this like with a heatmap on a shapefile:
 
 ```{r}
+#| echo: true
 
 # Cap growth rates at 1 just to get rid of the outlier
 shp_dt$growth_rate_capped <- pmin(shp_dt$growth_rate, 1)
