@@ -26,7 +26,6 @@ if ("try-error" %in% class(try({params$eval_all}, silent = TRUE)))
 #| error: false
 
 # Libraries
-library(dplyr)
 library(purrr)
 library(tidyr)
 library(readr)
@@ -46,8 +45,9 @@ library(mapview)
 library(flextable)
 library(ftExtra)
 library(knitr)
-library(htmltools)
 library(lubridate)
+
+library(dplyr)
 
 # Poland's database API
 library(bdl)
@@ -92,7 +92,6 @@ meta_vars <-
   mutate(across(c(Indicator, var_name), ~ as_factor(.)))
 
 geoms <- bd_clean |> pin_read("geometries")
-geoms <- geoms$`2023`
 ```
 
 ## Preparing poverty ralated variables (TBD)
@@ -139,12 +138,12 @@ year_focus <- c(2011, 2018:2025)
 #| label: tbl-nmissing
 #| tbl-cap: N missing observations by year, variable and aggregation level
 all_dta  |>
-  filter(var %in% var_focus) |>
+  dplyr::filter(var %in% var_focus) |>
   get_missing(geoms = geoms, range = year_focus) |>
   mutate(across(where(is.character), ~ ifelse(is.na(.), "N/A", .))) |>
   add_varnames(meta = meta_vars) |>
   mutate(var_name = str_c("'", var, "': ", var_name)) |>
-  select(var_name, level, matches("\\d{3,}")) |>
+  dplyr::select(var_name, level, matches("\\d{3,}")) |>
   arrange(var_name) |>
   group_by(var_name) |>
   as_flextable(hide_grouplabel = TRUE) |> 
@@ -182,7 +181,7 @@ dta_rhs <-
   filter(var %in% var_focus,
          year %in% year_focus) |>
   pl_decode_id() |> pl_rename_levels_dta() |> pl_rename_levels() |> 
-  select(-matches("id\\d_"), -type_LAU) |> 
+  dplyr::select(-matches("id\\d_"), -type_LAU) |> 
   pivot_wider(names_from = var, values_from = val) |> 
   mutate(
     # across(any_of(var_focus), ~ log(.)),
@@ -229,7 +228,7 @@ To assure quality of newly created variables, they could be visually inspected.
 
 ```{r}
 dta_rhs |>
-  select(id, year, wage_sal_total_share_country) |>
+  dplyr::select(id, year, wage_sal_total_share_country) |>
   pivot_longer(wage_sal_total_share_country, names_to = "var", values_to = "val") |>
   plot_var_by_year("wage_sal_total_share_country", 
                    geoms = geoms, 
@@ -257,7 +256,7 @@ library(correlation)
 dta_rhs_post |>
   filter(year %in% c(2011, 2018, 2024)) |> 
   glimpse() |> 
-  select(wage_sal_total_share_country, fam_allow_num, fam_allow_perfam) |> 
+  dplyr::select(wage_sal_total_share_country, fam_allow_num, fam_allow_perfam) |> 
   correlation()
 ```
 

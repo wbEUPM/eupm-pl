@@ -26,7 +26,6 @@ if ("try-error" %in% class(try(params$eval_all)))
 
 # Libraries
 pacman::p_load(
-  dplyr,
   purrr,
   tidyr,
   readr,
@@ -48,6 +47,8 @@ pacman::p_load(
   lubridate,
   bdl # Poland's database API  
 )
+
+library(dplyr)
 
 # Chunk setup
 knitr::opts_chunk$set(

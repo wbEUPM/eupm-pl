@@ -1,56 +1,8 @@
 
 # eupm-pl
 
-RStudio project for preparing data and performing the poverty mapping analysis 
-for Poland. It collects data from various sources, cleans and merges it, and 
-prepares data sets for analysis. Then, poverty mapping is performed.
+See `index.qmd` for the general instruction. 
 
-This project relies on the `renv` R package to ensure that the same version of 
-all supporting packages is being used by the users. To control for the version 
-change in the scripts, `git` is used locally with a corresponding github account. 
-Any data in the data folder and subfolders are ignored, therefore, will not 
-appear in the GitHub history to preserve privacy.
-
-
-# Project structure
-
-```
-.
-├── 00-master.R                   - Executes all code
-├── 05-geometries.qmd             - Documentation of the geometries preparation
-├── 10-SILC-variables.R           - Prepared variables based on the SILC data
-├── 20-other-variables.qmd        - Collection and normalization of other variables
-├── 30-data-mege.qmd              - Selecting relevant variables and merging data
-├── 40-________.qmd               - Analysis steps
-├── data                          - data inventory
-│   ├── clean                     - Place for clean and processed data sets, e.g. poverty maps.
-│   ├── raw                       - Repository for saving raw data
-│   │   ├── api                   - Area level data downloaded from the NSO api
-│   │   ├── ntl                   - Night time light data
-│   │   ├── geometries            - Geometrical boundaries at different levels
-│   │   ├── pl-metadata.xlsx      - Metadata for area-level data
-│   │   └── silk-sample           - Sample/dummy data for setting up the SILC code
-│   └── temp                      - Temporary processed raw data
-├── R                             - Custom R functions used in the analysis
-├── reports                       - Generated reports
-│   ├── 05-area-geometries.html
-│   └── 20-area-level-variables.html
-├── eupm-pl.Rproj                 - RStudio project file
-├── README.md                     - Read me
-└── _quarto.yml
-```
-
-## Prinsipals of data storage
-
-To save data, we rely on R (pins.rstudio.com)[https://pins.rstudio.com/], which 
-enable keeping a history of the data changes on the local folder structure.
-
-## Dat reload from the API
-
-To reload the data from the API, follow the instructions in the script 
-`20-other-variables.qmd`. Please note that by default, all data is reloaded 
-at once. It may take a while.
-
-
+To render the full website, use `quarto publish gh-pages`.
 
 

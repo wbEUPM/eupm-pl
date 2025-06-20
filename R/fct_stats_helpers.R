@@ -58,24 +58,24 @@ pl_load_recode_raw <-
           mutate(var = .x)
       }) |>
       bind_rows() |>
-      select(id, var, year, val) |> pl_decode_id() |>
-      filter(type_LAU %in% c("0", "1", "2", "3")) |>
-      select(id, year, var, val)
+      dplyr::select(id, var, year, val) |> pl_decode_id() |>
+      dplyr::filter(type_LAU %in% c("0", "1", "2", "3")) |>
+      dplyr::select(id, year, var, val)
     
     if (!is.null(meta_vars)) {
       var_match <- 
         meta_vars |>
-        filter(var_id_api %in% var_ids) |> 
-        select(var_id_api, var = var_id) |> 
+        dplyr::filter(var_id_api %in% var_ids) |> 
+        dplyr::select(var_id_api, var = var_id) |> 
         mutate(var = ifelse(is.na(var), var_id_api, var))
       dta <- dta |> 
         rename(var_id_api = var) |> 
         left_join(var_match, by = join_by(var_id_api)) |> 
-        select(-var_id_api)
+        dplyr::select(-var_id_api)
     }
     
     dta |>
-      select(id, year, var, val)
+      dplyr::select(id, year, var, val)
   }
 
 
@@ -168,11 +168,11 @@ get_missing <- function(dta, geoms, range = c(2011, 2019:2030), focus_levels = 4
     summarise(n = n(),
               missing = str_c(sum(is.na(val) | val == 0)),# "/", n()),
               .groups = "drop") |>
-    filter(year %in% range)  |>
-    select(-n) |>
+    dplyr::filter(year %in% range)  |>
+    dplyr::select(-n) |>
     pivot_wider(values_from = missing, names_from = year) |> 
     mutate(across(matches("\\d{4}"), ~ ifelse(is.na(.), as.character(nn), .))) |> 
-    filter(level %in% str_c("level", focus_levels)) |> 
+    dplyr::filter(level %in% str_c("level", focus_levels)) |> 
     pl_rename_levels()
 }
 
@@ -180,7 +180,7 @@ add_varnames <- function(dta, meta) {
   dta |>
     left_join(meta |>
                 mutate(var_name = str_c(var_name, " (", var_units, ")")) |>
-                select(var = var_id, var_name),
+                dplyr::select(var = var_id, var_name),
               by = join_by(var))
   
 }
@@ -190,7 +190,7 @@ get_format_missing <- function(dta, geoms, meta, range = c(2019:2030)) {
   dta |>
     get_missing(geoms, in_range) |>
     add_varnames(meta) |>
-    select(var_name, level, matches("\\d{3,}")) |>
+    dplyr::select(var_name, level, matches("\\d{3,}")) |>
     arrange(var_name) |>
     group_by(var_name) |>
     as_flextable(hide_grouplabel = TRUE)
@@ -210,7 +210,7 @@ get_coverage <- function(dta, keep_all = FALSE, years = NULL) {
     pivot_wider(names_from = var, values_from = n) |> 
     arrange(year)
   
-  if (!keep_all) dta <- dta |> filter(year %in% y_rel)
+  if (!keep_all) dta <- dta |> dplyr::filter(year %in% y_rel)
   
   dta
 }
@@ -246,17 +246,17 @@ plot_var <-
   function(dta, var_choice, geoms, meta, focus = 4:5, years = 2023) {
     var_nm <- tibble(var = var_choice) |> add_varnames(meta) |> pull(var_name)
     if (is.na(var_nm)) var_nm <- var_choice
-    dta <- dta |> filter(var %in% var_choice)
+    dta <- dta |> dplyr::filter(var %in% var_choice)
     
     geoms |>
       imap(~ tibble(level = .y, data = list(.x))) |>
       bind_rows() |>
-      filter(level  %in% str_c("level", focus)) |> 
+      dplyr::filter(level  %in% str_c("level", focus)) |> 
       pl_rename_levels() |>
       mutate(data = map2(level, data, ~ {
         .y |>
           left_join(dta, by = join_by(id)) |>
-          filter(year == years) |>
+          dplyr::filter(year == years) |>
           get_map(legend_name = years, title = .x) #+
           # theme(plot.margin = unit(c(0.0, 0.0, 0.0, 0.0), "inches")) 
       })) |>
@@ -272,18 +272,18 @@ plot_var_by_year <-
       mutate(var_name = str_c(var_name, " '", var, "'")) |> 
       pull(var_name)
     if (is.na(var_nm)) var_nm <- var_choice
-    dta <- dta |> filter(var %in% var_choice)
+    dta <- dta |> dplyr::filter(var %in% var_choice)
     
     all_plts <- 
       geoms |>
       imap(~ tibble(level = .y, data = list(.x))) |>
       bind_rows() |>
-      filter(level  %in% str_c("level", focus)) |> 
+      dplyr::filter(level  %in% str_c("level", focus)) |> 
       pl_rename_levels() |>
       mutate(data = map2(level, data, ~ {
         adm_level_name <- .x
         adm_level <- .y
-        all_dta <- adm_level |> left_join(dta, by = join_by(id)) |> filter(!is.na(val))
+        all_dta <- adm_level |> left_join(dta, by = join_by(id)) |> dplyr::filter(!is.na(val))
         all_years <- all_dta |> pull(year) |> unique()
         year_min <- ifelse(min(years) %in% all_years, min(years), min(all_years))
         year_max <- ifelse(max(years) %in% all_years, max(years), max(all_years))
@@ -293,7 +293,7 @@ plot_var_by_year <-
         years_focus <- c(year_min, year_mid, year_max) |> unique() |> sort()
         years_focus |>
           map(~{
-            all_dta |> filter(year == .x) |>
+            all_dta |> dplyr::filter(year == .x) |>
               get_map(
                 legend_name = NULL,
                 title = str_c(.x, ": ", adm_level_name))
@@ -330,13 +330,13 @@ plot_var_by_year <-
 get_plot_dta <- function(dta, geoms = NULL, var_ids = NULL, years = NULL, ...) {
   dta <- 
     dta |> 
-    filter(var_id %in% var_ids, year %in% years, ...) #|> 
+    dplyr::filter(var_id %in% var_ids, year %in% years, ...) #|> 
   # pivot_wider(names_from = var_id, values_from = value)
   
   if (!is.null(geoms)) {
     reg_all <- names(geoms)
-    reg_all_dta <- dta |> select(matches("ID\\d")) |> mutate(ID6_LAU3 = NA) |> 
-      select(-where(~ all(is.na(.)))) |> names()
+    reg_all_dta <- dta |> dplyr::select(matches("ID\\d")) |> mutate(ID6_LAU3 = NA) |> 
+      dplyr::select(-where(~ all(is.na(.)))) |> names()
     reg_max <- reg_all_dta |> max() |> str_remove("ID\\d_")
     
     return(left_join(geoms[[reg_max]], dta))
@@ -364,7 +364,7 @@ get_stats <- function(dta, keep_all = FALSE, years = NULL) {
       .groups = "drop"
     )
   
-  if (!keep_all) dta <- dta |> filter(year %in% y_rel)
+  if (!keep_all) dta <- dta |> dplyr::filter(year %in% y_rel)
   
   dta
 }

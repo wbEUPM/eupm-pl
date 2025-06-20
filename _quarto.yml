@@ -1,3 +1,32 @@
 project:
-  type: default
+  type: book
   output-dir: reports
+
+book:
+  title: "EUPM: Poland"
+  date: "June 20, 2025"
+  chapters:
+    - index.qmd
+    - 05-geometries.qmd
+    # - 20-other-variables.qmd
+    # - 30-data-mege.qmd
+    - 40-fh.qmd
+    - 50-mfh.qmd
+    
+bibliography: references.bib
+
+format:
+  html:
+    # shift-heading-level-by: 2
+    theme: cosmo
+    code-fold: false
+    code-tools: true
+    code-overflow: wrap
+    code-block-bg: true
+    code-block-border-left: "#31BAE9"
+    highlight-style: github
+    
+  # pdf:
+  #   documentclass: scrreprt
+
+editor: source

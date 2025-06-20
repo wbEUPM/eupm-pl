@@ -24,7 +24,6 @@ if ("try-error" %in% class(try(params$eval_all)))
 #| error: false
 
 # Libraries
-library(dplyr)
 library(purrr)
 library(tidyr)
 library(pins)
@@ -44,6 +43,8 @@ library(flextable)
 library(ftExtra)
 library(knitr)
 library(htmltools)
+
+library(dplyr)
 
 # Poland's database API
 library(bdl)
@@ -74,7 +75,7 @@ bd_clean <- root_clean |> board_folder(versioned = T)
 range <- c(2011, 2019:2030)
 ```
 
-# Geometries
+## Geometries
 
 Source: [Latest release](https://github.com/statisticspoland/R_Package_to_API_BDL/releases/tag/1.0.5) of the `bdl` package.
 
@@ -177,7 +178,7 @@ pl_geom <- pl_geom_1 + pl_geom_2 + patchwork::plot_layout(guides = "collect")
 pl_geom
 ```
 
-# Boundaries change over time
+## Boundaries change over time
 
 Generally, geographic boundaries appear consistent between 2011 and 2019, however, there are two LAU1 regions in 2019, which are not in 2011.  @fig-pl-geom-2 shows all the cahnges in the adminsitrative division between 2011 and 2019.
 
