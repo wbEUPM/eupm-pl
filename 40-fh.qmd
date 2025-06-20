@@ -1,5 +1,5 @@
 ---
-title: "The Univariate Fay-Herriot model"
+title: "The Univariate Fay-Herriot (UFH) model"
 author: "Sylvia Harmening"
 format: html
 editor: visual
@@ -8,14 +8,14 @@ bibliography: references.bib
 
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
 #| label: setup
-#| echo: false
+#| echo: true
 #| warning: false
 #| message: false
 #| error: false
 
 # Chunk setup
 knitr::opts_chunk$set(
-  echo = FALSE,
+  echo = TRUE,
   message = FALSE,
   warning = FALSE,
   error = FALSE
@@ -50,7 +50,7 @@ bd_out <- board_folder("data/clean-example", versioned = TRUE)
 
 ## Introduction
 
-In this section, we will present a whole estimation procedure of the standard area-level model introduced by @Fay1979 in R. As with the disclaimer in the preceding section, this practical manual is not intended to serve as a theoretical introduction to area-level models. Instead, it offers a set of straightforward and practical R scripts, accompanied by clear explanations, to demonstrate how these tasks can be carried out in R. For a theoretical foundation please refer to @Fay1979 and @RaoMolina2015. In addition to theoretical information, the vignette "A framework for producing small area estimates based on area-level models in R" of the R package `emdi` [@Harmening2023] provides further code examples for the FH model.
+In this section, we will present a whole estimation procedure of the univariate area-level model introduced by @Fay1979 in R. As with the disclaimer in the preceding section, this practical manual is not intended to serve as a theoretical introduction to area-level models. Instead, it offers a set of straightforward and practical R scripts, accompanied by clear explanations, to demonstrate how these tasks can be carried out in R. For a theoretical foundation please refer to @Fay1979 and @RaoMolina2015. In addition to theoretical information, the vignette "A framework for producing small area estimates based on area-level models in R" of the R package `emdi` [@Harmening2023] provides further code examples for the FH model.
 
 In this chapter, we will describe how to run the univariate Fay-Herriot (FH) using simulated income data from Spain. The estimation procedure is explained step by step.
 
@@ -140,8 +140,8 @@ shp_dt |>
 ```
 `shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`. 
 
-A quick summary table on the data needs for the MFH model: 
-```{r}
+A quick summary table on the data needs for the UFH model: 
+```{r, echo = FALSE}
 
 # Create the table content
 fh_table <- tibble::tibble(
@@ -152,8 +152,8 @@ fh_table <- tibble::tibble(
     "Target Area (Spatial)"
   ),
   `Required Variables` = c(
-    "`target area identifiers`, `weights`, `cluster identifier`, year, `income/welfare variable`, `poverty line`",
-    "`target area identifiers`, `year`, `covariates` (e.g. `gen`, `educ1`, `schyrs`, etc.)",
+    "`target area identifiers`, `weights`, `cluster identifier`, `income/welfare variable`, `poverty line`",
+    "`target area identifiers`, `covariates` (e.g. `gen`, `educ1`, `schyrs`, etc.)",
     "`target area identifiers`, `geometries` (e.g. `geometry` column from `sf`)"
   )
 )
@@ -189,7 +189,7 @@ fh_table %>%
 
 ### Direct estimation
 
-We will use the direct Horvitz-Thompons estimators that use the survey weights in `weight` variable. We calculate the sample sizes for each provinces and compute the direct estimates and their variances. We use the `direct` function of the `emdi` package here. Other options are e.g. the `direct` function of package `sae` [@molinamarhuenda2015] or the `svyby` command of package `survey` [@Lumley2024]. Then, we create a dataframe containing the direct estimate, the standard errors, the variances, the coefficient of variation and the design effects, that are needed for the arcsin transformation. The design effect is the ratio of the variance considering the sampling design to the variance estimated under simple random sampling. For detailled information about the arcsin transformation please refer to @Casas2016 and @Schmid2017. In some areas with a very small sample size, it may occur, that the individual data only consists of zeros and ones, resulting in a direct estimate of zero or one and a direct variance of zero. We set those areas to out-of-sample and for the final estimation results only the synthetic part of the FH model is used.
+We will use the direct Horvitz-Thompons estimators that use the survey weights in `weight` variable. We calculate the sample sizes for each provinces and compute the direct estimates and their variances. We use the `direct` function of the `emdi` package here. Other options are e.g. the `direct` function of package `sae` [@molina2015r] or the `svyby` command of package `survey` [@Lumley2024]. Then, we create a dataframe containing the direct estimate, the standard errors, the variances, the coefficient of variation and the design effects, that are needed for the arcsin transformation. The design effect is the ratio of the variance considering the sampling design to the variance estimated under simple random sampling. For detailled information about the arcsin transformation please refer to @Casas2016 and @Schmid2017. In some areas with a very small sample size, it may occur, that the individual data only consists of zeros and ones, resulting in a direct estimate of zero or one and a direct variance of zero. We set those areas to out-of-sample and for the final estimation results only the synthetic part of the FH model is used.
 
 ```{r direct, message = FALSE, warning = FALSE}
 ### a little bit of housekeeping to ensure ease of access 
@@ -260,7 +260,7 @@ Here is what the results look like:
 
 ```{r}
 
-direct_dt
+head(direct_dt)
 
 ```
 
@@ -315,18 +315,22 @@ With the help of the `step()` function of package `emdi`, we perform a variable 
 
 We apply the function to select the variables. Required inputs: data set, character vector containing the set of auxiliary variables, name of y variable, a correlation threshold between 0 and 1, name of information criterion and name of direct variance variable. In case, a transformation should be applied, "arcsin" as transformation and name of variable that contains the effective sample size.
 
-```{r remove_multicol, message = FALSE, warning = FALSE}
+```{r remove_multicol, message = FALSE, warning = FALSE, results = "hide"}
 fh_step <- step_wrapper_fh(dt = fh_dt,
                            xvars = candidate_vars,
                            y = "direct_povrate",
-                           cor_thresh = 0.8,
+                           cor_thresh = 0.7,
                            criteria = "BIC",
                            vardir = "vardir", 
                            transformation = "arcsin", 
                            eff_smpsize = "n_eff")
 
+```
+```{r remove_multicol1, message = FALSE, warning = FALSE}
+# Resulting model formula
 print(fh_step$fixed)
 ```
+
 
 ## Model estimation of FH point and their MSE estimates.
 
@@ -366,7 +370,7 @@ We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains b
 
 We produce normal quantile-quantile (Q-Q) plots of the standardized realized residuals and random effects and plots of the kernel densities of the distribution of both error terms by the `plot` method of `emdi`.
 
-```{r plot, message = FALSE, warning = FALSE}
+```{r plot, warning = FALSE}
 plot(fh_model)
 ```
 
@@ -378,7 +382,7 @@ The FH estimates are expected to align closely with the direct estimates in doma
 
 Additionally, we compute a correlation coefficient of the direct estimates and the estimates of the regression-synthetic part of the FH model [@Chandra2015] and a goodness of fit diagnostic [@Brown2001].
 
-```{r compare, message = FALSE, warning = FALSE}
+```{r compare, warning = FALSE}
 compare_plot(fh_model, MSE = TRUE, CV = TRUE)
 compare(fh_model)
 
@@ -434,7 +438,7 @@ write.csv(pov_fh, "data/clean-example/pov_fh.csv")
 
 With the help of geographical maps, the results can be presented in a user-friendly way and differences among the areas can be detected more easily. For the map, a shape file is reqired. The domain identifiers in the results object (`fh_model`) need to match to the respective identifiers of the shape file. Therefore, we create a mapping table first and then produce the map by `emdi::map_plot`.
 
-```{r fig-povmap}
+```{r fig-povmap, message = FALSE}
 ## Create a suitable mapping table
 ## Find the right order
 domain_ord <- match(shp_dt[[area_vars[1]]], fh_model$ind$Domain)
@@ -451,19 +455,6 @@ map_plot(object = fh_model, MSE = TRUE, map_obj = shp_dt,
 
 ## Saving the results.
 
-### Save workspace.
+Either by using `save.image("fh_estimation.RData")` or export of the model output and estimation results to Excel or OpenDocument spreadsheet (ODS) `write.excel(fh_model, file = "fh_model_output.xlsx", MSE = TRUE, CV = TRUE`.
 
-```{r save, message = FALSE, warning = FALSE, eval = FALSE}
-save.image("fh_estimation.RData")
-### save the data to pin board
-
-```
-
-### Export the model output and estimation results.
-
-```{r saveexcel, message = FALSE, warning = FALSE, eval = FALSE}
-write.excel(fh_model,
-  file = "fh_model_output.xlsx",
-  MSE = TRUE, CV = TRUE
-)
-```
+## References
