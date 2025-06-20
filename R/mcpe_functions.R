@@ -26,7 +26,7 @@ library(MASS)
 library(Matrix)
 library(matrixcalc)
 
-pbmcpeMFH2 <- function(formula, vardir, nB = 100, data) {
+pbmcpeMFH2 <- function(formula, vardir, nB = 100, data, ...) {
 
   nD <- nrow(data)
   nT <- length(formula)
@@ -37,7 +37,10 @@ pbmcpeMFH2 <- function(formula, vardir, nB = 100, data) {
   p_list <- sapply(X_list, ncol)
   
   # Fit base model
-  result <- eblupMFH2(formula = formula, vardir = vardir, data = data)
+  result <- eblupMFH2(formula = formula, 
+                      vardir = vardir, 
+                      data = data,
+                      ...)
   if (!result$fit$convergence) stop("Base model did not converge")
   
   # Extract beta coefficients from matrix

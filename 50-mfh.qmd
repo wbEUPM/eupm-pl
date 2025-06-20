@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 pak_list <- c("sf", "data.table", "tidyverse", "car", "msae",
               "sae", "survey", "spdep", "knitr", "MASS", "caret",
               "caret", "purrr", "pins", "gt", "lmtest", "scales",
-              "viridis")
+              "viridis", "patchwork")
 
 invisible(sapply(pak_list, 
                  library, 
@@ -407,36 +407,73 @@ candidate_vars <-
   unname()
   
   
-  
-  
-fh_step <- 
+## extract the year identifiers in each variance covariance name
+varyear_list <- stringr::str_extract_all(varcols, "\\d{4}")
+
+## Keep only those where both years are the same i.e. the variances
+variance_cols <- varcols[lengths(varyear_list) == 2 & 
+                           sapply(varyear_list, function(x) x[1] == x[2])]
+
+## replace the variances-covariances that are zero or near zero with their smoothed counterparts
+mfh_dt <- 
+  mfh_dt |>
+  mutate(across(
+    starts_with("v_"),
+    ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
+    .names = "{.col}"
+  ))
+
+fh_step <-
   lapply(X = paste0("direct_povrate", unique(survey_dt[[year_var]])),
          FUN = function(x){
-           
-           model_obj <- 
+
+           model_obj <-
            step_wrapper(dt = mfh_dt,
                         xvars = candidate_vars,
                         y = x,
-                        cor_thresh = 0.7)
-           
-           xx <- names(model_obj$coefficients)[!grepl("(Intercept)", 
+                        cor_thresh = 0.7,
+                        k = log(nrow(mfh_dt))) ### using log(n) to force BIC selection
+
+           xx <- names(model_obj$coefficients)[!grepl("(Intercept)",
                                                       names(model_obj$coefficients))]
            return(xx)
-           
+
          })
 
 
-mfh_formula <- 
+# mfh_formula <- 
+#   mapply(x = paste0("direct_povrate", unique(survey_dt[[year_var]])),
+#          y = variance_cols,
+#          FUN = function(x, y){
+#            
+#            fh_step <- step_wrapper_fh(dt = mfh_dt,
+#                                       xvars = candidate_vars,
+#                                       y = x,
+#                                       cor_thresh = 0.8,
+#                                       criteria = "BIC",
+#                                       vardir = y,
+#                                       transformation = "no")
+#            
+#            return(fh_step$fixed)
+# 
+#          },
+#          SIMPLIFY = FALSE)
+
+
+mfh_formula <-
   mapply(FUN = function(x, rhs){
-    
+
     y <- as.formula(paste0(x, " ~ ", paste(rhs, collapse = " + ")))
-    
+
     return(y)
-    
+
   },
   x = paste0("direct_povrate", unique(survey_dt[[year_var]])),
   rhs = fh_step,
   SIMPLIFY = FALSE)
+
+### here is what the 3 equations look like
+mfh_formula
 
 ```
 
@@ -447,14 +484,6 @@ Next, we show how to use the `msae` R package to estimate the Empirical Best Lin
 ```{r}
 #| echo: true
 
-## replace the variances-covariances that are zero or near zero with their smoothed counterparts
-mfh_dt <- 
-  mfh_dt |>
-  mutate(across(
-    starts_with("v_"),
-    ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
-    .names = "{.col}"
-  ))
 
 #### now we estimate the model of the univariate models as well as the multivariate fay herriot models 1 and 2
 
@@ -697,12 +726,6 @@ model2pov_dt <- merge(model2pov_dt,
 
 ### compute direct CVs and include in `model2pov_dt`
 
-## extract the year identifiers in each variance covariance name
-varyear_list <- stringr::str_extract_all(varcols, "\\d{4}")
-
-## Keep only those where both years are the same i.e. the variances
-variance_cols <- varcols[lengths(varyear_list) == 2 & 
-                           sapply(varyear_list, function(x) x[1] == x[2])]
 
 ## we have to reshape the direct estimates data in mfh_dt from wide to long
 ## and then merge with model2pov_dt 
@@ -859,7 +882,9 @@ mcpemfh2_obj <-
 pbmcpeMFH2(formula = mfh_formula,
            vardir = varcols,
            nB = 10,
-           data = mfh_dt)
+           data = mfh_dt, 
+           MAXITER = 1e10, 
+           PRECISION = 1e-2)
 
 
 #' A function to compare and plot differences from the mcpe object
@@ -970,11 +995,50 @@ comp13_obj$df %>%
 
 ```
 
-### Some Other Post-Estimation Analytics
+### Presenting Results
 
-Now that we have estimated the MFH models, we might be interested in the following:
+Now that we have estimated the MFH models and run some diagnostics, we might be interested in the following:
 
-- 
+- presenting some poverty maps
+
+```{r}
+#| echo: true
+#| fig-width: 15
+#| fig-height: 8
+
+lapply(X = unique(survey_dt[[year_var]]),
+       FUN = function(x){
+         
+         shp_dt |>
+           merge(model2pov_dt %>% 
+                   filter(!!sym(year_var) == x) |>
+                   dplyr::select(!!sym(area_vars[[1]]), "modelpov"),
+                 by = area_vars[[1]]) |>
+           ggplot() + 
+           geom_sf(aes(fill = modelpov), color = NA) +
+            scale_fill_viridis(
+              name = "Poverty Map",
+              option = "magma",
+            ) +
+            theme_minimal() +
+            labs(
+              title = paste0("Spatial Distribution of Poverty ", x),
+              caption = "Data source: Author Calculation"
+            ) +
+            theme(
+              legend.position = "bottom",
+              axis.text = element_blank(),
+              axis.ticks = element_blank(),
+              panel.grid = element_blank()
+            )
+         
+       }) |>
+  Reduce(f = "+")
+  
+  
+
+```
+
 - quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
 
 ```{r}

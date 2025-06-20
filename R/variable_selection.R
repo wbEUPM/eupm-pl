@@ -5,12 +5,18 @@
 #' @param y `character`, the name of the y variable
 #' @param cor_threshold `numeric`, value between 0 and 1 for the correlation threshold beyond 
 #' which variable should be dropped
+#' @param k `numeric` the multiple of the number of degrees of freedom used for the penalty. 
+#' Only k = 2 gives the genuine AIC: k = log(n) is sometimes referred to as BIC or SBC.
 #' 
 #' @import data.table
 #' @importFrom cars vif
 #' @importFrom MASS stepAIC
 
-step_wrapper <- function(dt, xvars, y, cor_thresh = 0.95) {
+step_wrapper <- function(dt, 
+                         xvars, 
+                         y, 
+                         cor_thresh = 0.95, 
+                         k) {
   
   dt <- as.data.table(dt)
   
@@ -64,7 +70,10 @@ step_wrapper <- function(dt, xvars, y, cor_thresh = 0.95) {
   full_model <- lm(model_formula, data = dt)
   
   # Stepwise selection
-  stepwise_model <- stepAIC(full_model, direction = "both", trace = 0)
+  stepwise_model <- stepAIC(full_model, 
+                            direction = "both", 
+                            trace = 0,
+                            k = k)
   
   return(stepwise_model)
   
