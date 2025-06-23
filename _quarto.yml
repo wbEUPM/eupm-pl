@@ -8,10 +8,11 @@ book:
   chapters:
     - index.qmd
     # - 05-geometries.qmd
+    - 10-direct-estimates.qmd
     # - 20-other-variables.qmd
     # - 30-data-mege.qmd
-    - 40-fh.qmd
-    - 50-mfh.qmd
+    # - 40-fh.qmd
+    # - 50-mfh.qmd
     
 bibliography: references.bib
 
