@@ -25,19 +25,8 @@ if ("try-error" %in% class(try(params$eval_all)))
 
 # Libraries
 pacman::p_load(
-  # caret, 
-  # emdi,
-  # MASS,
-  # Matrix,
-  # matrixcalc, 
-  # readxl, 
-  # arrow, 
-  # glue, 
-  # forcats,
-  # ggplot2, 
-  # ,
-  # patchwork,
-  # sf, 
+  # biscale,
+  readxl,
   flextable, ftExtra, 
   knitr,
   scales, 
@@ -64,7 +53,7 @@ list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |>
 # Raw data root
 root_raw <- "./data/raw"
 root_temp <- "./data/temp"
-root_clean <- "./data/clean-example"
+root_clean <- "./data/clean"
 
 # Data-storage boards
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
@@ -160,40 +149,117 @@ SILC data often includes the following relevant variables:
 -   `strata`: Stratum of the second-stage randomization (possibly DB062).
 
 ```{r dta-load}
-path_silc_data <- "data/raw/silk-sample/"
+# Individual data ---------------------------------------
+dta_ind  <- 
+  list.files("../Poland/data-eusilc/UDB_CR/", full.names = TRUE) |> 
+  lapply(X = _, function(f) {
+    f |>
+      read_sav() |>
+      transmute(
+        year = as.integer(RB010), # Year
+        hh_id = as.integer(RX030), # Household identifier
+        ind_weight = as.numeric(RB050), # Personal cross-sectional weigh
+        arope = as.integer(RX070) # At rist of poverty or sicial exclusion
+      )
+  }) |> 
+  bind_rows() 
 
-dta0 <- 
-  file.path(path_silc_data, "dataexample2021.dta") |> 
-  read_dta() |> mutate(year = 2021) |> 
-  bind_rows(file.path(path_silc_data, "dataexample2022.dta") |> 
-              read_dta() |> 
-              mutate(year = 2022)) |> 
-  bind_rows(file.path(path_silc_data, "dataexample2023.dta") |> 
-              read_dta() |> 
-              mutate(year = 2023))
+dta_ind |> group_by(year) |> summarise(sum(ind_weight))
+
+# HH data -------------------------------------------------------
+dta_hh_1  <- 
+  list.files("../Poland/data-eusilc/UDB_CH/", full.names = TRUE) |> 
+  map(~{
+    .x |> 
+      read_sav() |>
+      transmute(
+        year = as.integer(HB010), # Year
+        hh_id = as.integer(HB030), # Household identifier
+        inc_adeq = as.numeric(HX090), # Equivalised disposable income
+        hh_size = as.integer(HX040), # Household size
+        hh_size_adeq = as.integer(HX050) # Equivalised household size
+      )
+  }) |> 
+  bind_rows()
+
+# HH data -----------------------------------------
+dta_hh <- 
+  dta_ind |> 
+  group_by(year, hh_id) |> 
+  mutate(hh_size2 = n()) |> 
+  group_by(year, hh_id, hh_size2) |> 
+  summarise(
+    hh_weight = sum(ind_weight),
+    arope = first(arope)
+  ) |> 
+  ungroup() |> 
+  left_join(dta_hh_1, join_by(hh_id, year))
+
+dta_hh |> group_by(year) |> summarise(sum(hh_weight))
+
+# Region MT ------------------------------------
+powiat_podregion_codes <-
+  read_xlsx("../Poland/data-other/powiat-podregion-codes.xlsx") |>
+  dplyr::select(powiat_id, subcode = podregion_id)
+
+# Sampling frame -------------------------------------
+path_silc_data <- "../Poland/data-eusilc/national"
+all_files <- list.files(path_silc_data, full.names = TRUE) 
+
+# dta_exmpl <- all_files[5] |> read_sav()
+
+dta_hh_loc <- 
+  list.files(path_silc_data, full.names = TRUE) |> 
+  map(~{
+    dta <- .x |> read_sav() 
+    if (!"db095" %in% names(dta)) dta <- dta |> mutate(db095 = NA_real_)
+    dta |>
+      transmute(
+        year = as.integer(db010), # year
+        hh_id = as.integer(DB030), # household id
+        rotation = as.character(db075),
+        psu = as.character(db060), # First stage randomization
+        ssu = as.character(db062), # First stage randomization
+        strata = as.character(db050), # Stratum of the second stage randomization
+        symter = as.character(symter), # TERYT
+        long_weight = as.numeric(db095)
+      )
+  }) |> 
+  bind_rows() |> 
+  mutate(
+    powiat_id  = str_sub(symter, 1, 4)
+  ) |> 
+  left_join(powiat_podregion_codes, by = join_by(powiat_id))
+
 
 dta1 <- 
-  dta0 |> 
-  # We select and rename survey variable into the relevant names
-  # hhid, id, psu, strata, and others if needed. Use syntax:
-  # select(NEW_WAR_NAME = OLD_VAR_NAME). All names are case-sensitive
-  # This function only returns variables that are being selected, while all
-  # other variables are being dropped.
-  select(
-    id = db040,
-    year = year,
-    psu = psu,          # Primary sampling unit of the HH.
-    strata = strata,    # Strata if available
-    hh_id = hhid,       # For the HH-level data we need HH id.
-    hh_weight = rb050,  # Individual weights in the household
-    hh_size = hx040,    # Size of HH individuals
-    hh_size_adeq = hx050, #Size of the HH in adult equivalent
-    inc_adeq = hx090,   # Income per adult equivalent or other types on income
-    arope = rx070       # Individual is at risk of poverty and social exclusion
-  ) |> 
-  
-  # Clean any Stata-related metadata
-  zap_labels()
+  dta_hh |> 
+  left_join(dta_hh_loc, by = join_by(year, hh_id))
+
+dta1 |> group_by(year) |> summarise(across(contains("weight"), ~sum(.)))
+
+# dta1 <- 
+#   dta0 |> 
+#   # We select and rename survey variable into the relevant names
+#   # hhid, id, psu, strata, and others if needed. Use syntax:
+#   # select(NEW_WAR_NAME = OLD_VAR_NAME). All names are case-sensitive
+#   # This function only returns variables that are being selected, while all
+#   # other variables are being dropped.
+#   select(
+#     id = db040,
+#     year = year,
+#     psu = psu,          # Primary sampling unit of the HH.
+#     strata = strata,    # Strata if available
+#     hh_id = hhid,       # For the HH-level data we need HH id.
+#     hh_weight = rb050,  # Individual weights in the household
+#     hh_size = hx040,    # Size of HH individuals
+#     hh_size_adeq = hx050, #Size of the HH in adult equivalent
+#     inc_adeq = hx090,   # Income per adult equivalent or other types on income
+#     arope = rx070       # Individual is at risk of poverty and social exclusion
+#   ) |> 
+#   
+#   # Clean any Stata-related metadata
+#   zap_labels()
 ```
 
 Resulting data has the structure displayed below.
@@ -219,15 +285,7 @@ Besides, income and other characteristics are already pre-computed in our case.
 Therefore, to extract them at the household level, we need to group by household id and extract first value of each variable.
 
 ```{r dta2-hhlevel}
-dta2 <- 
-  dta1 |>  
-  group_by(year, id, hh_id) |> 
-  summarise(
-    across(c(psu, strata, hh_weight, hh_size, hh_size_adeq, inc_adeq, arope), 
-           ~ first(.)), 
-    .groups = "drop"
-  )
-glimpse(dta2)
+dta2 <- dta1 
 ```
 
 Resulting data is smaller in size, however, if done correctly, the product of the HH weight and size summed over years should return the size of the population in the country.
@@ -235,14 +293,39 @@ Resulting data is smaller in size, however, if done correctly, the product of th
 ```{r dta2-check}
 dta2 |>
   group_by(year) |> 
-  summarise(pop_size = sum(hh_size * hh_weight, na.rm = T)) |>
+  summarise(pop_size = sum(hh_weight, na.rm = T)) |>
   glimpse()
 ```
 
 ## Step 2.2 Exploratory analysis of the survey structure
 
-```{r dta-explore}
+Checking the panel structure.
 
+Panel structure does exist between 2022 and 2023.
+
+```{r dta-explore, eval=FALSE}
+dta_multiple <-
+  dta2 |> 
+  filter(year > 2021) |> 
+  group_by(
+    symter,  powiat_id, subcode, hh_id, rotation 
+  ) |> 
+  count(sort = T) |> 
+  ungroup()
+
+dta2 |> 
+  filter(year > 2021) |> 
+  # count(hh_id, hh_weight)
+  select(symter,  powiat_id, subcode, hh_id, rotation, year, long_weight) |> 
+  mutate(n = 1) |> 
+  pivot_wider(names_from = c(year, rotation), values_from = n, values_fill = 0) |> 
+  mutate(sum = `2022_1` + `2022_2` + `2022_3` + `2022_4` + `2023_2` + `2023_3` + `2023_4` + `2023_1`) |>
+  group_by(pick(matches("\\d{4}"))) |>
+  summarise(long_weight = sum(long_weight)) |> 
+  count()
+
+dta_multiple |> slice(1:2) |>
+  left_join(dta2)
 ```
 
 
@@ -254,37 +337,43 @@ Median income has to be computed for each year separately taking into considerat
 Below we compute this variables and name them in a standardized way so that they can be used nearly automatically for calculating direct estimates of poverty and variances.
 
 ```{r dta3-step3}
-dta3 <- 
-  dta2 |> 
+cpi_dta <-
+  tribble(
+    ~year, ~cpi, ~cpi_2019,
+    2019,	102.3, 1.,
+    2020,	103.4, 0.967117988,
+    2021,	105.1, 0.920188381,
+    2022,	114.4, 0.804360473,
+    2023,	111.4, 0.722047103
+    ) 
+
+dta3 <-
+  dta2 |>
+  left_join(cpi_dta, by = join_by(year)) |> 
   # We must group by country/year in order to compute all statistics on the annual basis.
-  group_by(year) |> 
+  group_by(year) |>
   mutate(
-    pop_weight = hh_size * hh_weight,       # population weights 
     inc_pc = (inc_adeq * hh_size_adeq) / hh_size, # HH disposable income per capita
     povetry_line =  0.6 * Hmisc::wtd.quantile(
-      x = inc_adeq, 
-      weights = pop_weight, 
-      probs = 0.5, 
-      na.rm = TRUE)
-    ) |> 
-  ungroup() |> 
+      x = inc_adeq,
+      weights = hh_weight,
+      probs = 0.5,
+      na.rm = TRUE),
+    povetry_line_2019 = ifelse(year == 2019, povetry_line, NA_real_)
+    
+    ) |>
+  ungroup() |>
+  fill(povetry_line_2019, .direction = "downup") |> 
   mutate(
     arop = as.integer(inc_adeq < povetry_line),
+    arop19 = as.integer(inc_adeq*cpi_2019 < povetry_line_2019),
     arope = ifelse(is.na(arope), NA, as.numeric(arope != 0))
-    ) |> 
-  select(
-    year,
-    id,
-    hh_id,
-    cluster = psu,
-    strata = strata,
-    weight = pop_weight,
-    poor = arop
-  ) |> 
-  mutate(psu = 1)
-  # ungroup() 
+    ) 
 
-dta3 |> glimpse()
+# dta3 |> filter(year != 2011) |> 
+#   filter(arop != arop19) |> 
+#   count(year)
+dta3 |>  glimpse()
 ```
 
 ## Step 4. Direct Poverty Estimates and Covariances
@@ -305,13 +394,13 @@ Then, we compute the sample and population sizes per region, as well as the dire
 #| echo: true
 
 # Relevant variable
-area_var <- "id"  # Area ID
+area_var <- "subcode"  # Area ID
 hhid_var <- "hh_id"
 year_var <- "year"    # Year
-cluster_var <- "cluster" 
+cluster_var <- c("psu", "ssu") 
 strata_var <- "strata"
-weight_var <- "weight" 
-poverty_var <- "poor"
+weight_var <- "hh_weight" 
+poverty_var <- c("arop", "arope", "arop19")
 
 # Sample and population sizes 
 dta4_size <- 
@@ -332,29 +421,71 @@ check_null <- function(x) {
 }
 
 # Survey design object 
-dta4_design <-
+dta4_design_11 <-
   survey::svydesign(
     ids = check_null(cluster_var), 
     strata = check_null(strata_var),
     weights = check_null(weight_var),
-    data = dta3,
+    data = dta3 |> filter(year == 2011),
     nest = TRUE         # Set nesting to FALS if you are sure that 
                         # PSU are defined uniqiely accross clusters
   )
 
+dta4_design_19 <-
+  survey::svydesign(
+    ids = check_null(cluster_var), 
+    strata = check_null(strata_var),
+    weights = check_null(weight_var),
+    data = dta3 |> filter(year != 2011),
+    nest = TRUE         # Set nesting to FALS if you are sure that 
+                        # PSU are defined uniqiely accross clusters
+  )
+
+options(survey.lonely.psu = "adjust")
+
 # Direct estimates
-dta4_direct <-
+dta4_direct_11 <-
+  survey::svyby(
+    formula = check_null(c("arop", "arope")),
+    by = check_null(c(area_var, year_var)),
+    design = dta4_design_11,
+    FUN = survey::svymean
+  ) |>
+  as_tibble()
+
+dta4_direct_19 <-
   survey::svyby(
     formula = check_null(poverty_var),
     by = check_null(c(area_var, year_var)),
-    design = dta4_design,
+    design = dta4_design_19,
     FUN = survey::svymean
   ) |>
-  as_tibble() |>
-  rename(pov = all_of(poverty_var)) |>
+  as_tibble()
+
+dta4_direct0 <- 
+  dta4_direct_19 |> 
+  bind_rows(dta4_direct_11) |> 
+  pivot_longer(contains("arop")) |> 
+  filter(!is.na(value)) |> 
+  separate(name, into = c("var", "type")) |> 
+  mutate(type = ifelse(is.na(type), var, type),
+         var = ifelse(var != "se", "pov", var)) |> 
+  pivot_wider(names_from = var, values_from = value) 
+
+# # Check
+# dta4_direct |> 
+#   group_by(year) |> 
+#   summarise(across(c(pov, se), list(~mean(.), ~sd(.))))
+
+dta4_direct <-
+  dta4_direct0 |>
   rename(SD = se) |>
-  mutate(vardir = SD^2) |>
-  mutate(CV = SD / pov) |>
+  mutate(
+    # pov = pov,
+    # SD = SD,
+    vardir = SD ^ 2,
+    CV = SD / pov
+    ) |>
   left_join(dta4_size, by = c(area_var, year_var)) |> 
   mutate(var_SRS = pov * (1 - pov) / N) |>
   mutate(deff = vardir / var_SRS) |>
@@ -364,7 +495,7 @@ dta4_direct <-
 Resulting data set has teh following structure:
 
 ```{r}
-dta4_direct |> glimpse()
+# dta4_direct |> glimpse()
 ```
 
 ### Covariances
@@ -383,55 +514,55 @@ For balanced panel covariances, we first need to construct a panel dataset and t
 To do this, we pivot the data for household-specific poverty statuses into a wide format and then compute variance-covariance matrices, dropping any rows with missing observations.
 
 ```{r dta-vcov-balanced}
-dta4_wide <-
-  dta3 |>
-  select(all_of(c(area_var, hhid_var, cluster_var, strata_var, 
-                  weight_var, year_var, poverty_var))) |> 
-  pivot_wider(
-    id_cols = all_of(c(area_var, hhid_var, cluster_var, strata_var, weight_var)),
-    names_from = year_var,
-    values_from = all_of(poverty_var),
-    names_glue = "{.value}{year}",
-    values_fn = first
-  )  
-  # filter(id %in% c(101:102)) |>
-  # mutate(across(
-  #   contains("poor"),
-  #   ~ ifelse(row_number() %in% sample(seq(1, length(
-  #     .data[[area_var]]
-  #   )), 100), NA_real_, .)
-  # ))
-
-
-dta4_vcov_1 <- 
-  compute_vcov(dt = dta4_wide,
-               domain = area_var,
-               ids = cluster_var, 
-               strata = strata_var,
-               weights = weight_var,
-               yvars = paste0("poor", unique(dta3[[year_var]])),
-               na.rm = TRUE) 
+# dta4_wide <-
+#   dta3 |>
+#   select(all_of(c(area_var, hhid_var, cluster_var, strata_var, 
+#                   weight_var, year_var, poverty_var))) |> 
+#   pivot_wider(
+#     id_cols = all_of(c(area_var, hhid_var, cluster_var, strata_var, weight_var)),
+#     names_from = year_var,
+#     values_from = all_of(poverty_var),
+#     names_glue = "{.value}{year}",
+#     values_fn = first
+#   )  
+#   # filter(id %in% c(101:102)) |>
+#   # mutate(across(
+#   #   contains("poor"),
+#   #   ~ ifelse(row_number() %in% sample(seq(1, length(
+#   #     .data[[area_var]]
+#   #   )), 100), NA_real_, .)
+#   # ))
+# 
+# 
+# dta4_vcov_1 <- 
+#   compute_vcov(dt = dta4_wide,
+#                domain = area_var,
+#                ids = cluster_var, 
+#                strata = strata_var,
+#                weights = weight_var,
+#                yvars = paste0("poor", unique(dta3[[year_var]])),
+#                na.rm = TRUE) 
 ```
 
 ### Pairvise covariances
 
 ```{r dta-vcov-paired}
-dta4_vcov_2 <- 
-  compute_vcov_pairs(dt = dta4_wide,
-               domain = area_var,
-               ids = cluster_var, 
-               strata = strata_var,
-               weights = weight_var,
-               yvars = paste0("poor", unique(dta3[[year_var]])),
-               na.rm = TRUE) 
+# dta4_vcov_2 <- 
+#   compute_vcov_pairs(dt = dta4_wide,
+#                domain = area_var,
+#                ids = cluster_var, 
+#                strata = strata_var,
+#                weights = weight_var,
+#                yvars = paste0("poor", unique(dta3[[year_var]])),
+#                na.rm = TRUE) 
 ```
 
 
 Here is what the results look like:
 
 ```{r, echo = TRUE}
-glimpse(dta4_vcov_1)
-glimpse(dta4_vcov_2)
+# glimpse(dta4_vcov_1)
+# glimpse(dta4_vcov_2)
 ```
 
 ## Step 5. Variance smoothing
@@ -441,27 +572,27 @@ A quick inspection of the preceding results will show some provinces contain low
 The goal now is to use the above `varsmoothie_king()` function to add additional columns of smoothed variances into our `var_dt` object.
 
 ```{r dir-est-var-smooth}
-#| echo: true
-varcols <- dta4_vcov_1 |> select(starts_with("v_")) |> names()
-dta4_smooth <- dta4_vcov_1 |> 
-  left_join(dta4_direct |>
-              filter(year == first(year)) |>
-              select(id, N), by = join_by(id))
-dta4_smooth <-
-  lapply(X = varcols,
-         FUN = function(x){
-           z <- varsmoothie_king(domain = dta4_smooth[[area_var]],
-                                 direct_var = dta4_smooth[[x]],
-                                 sampsize = dta4_smooth[["N"]]) |>
-             as.data.table() |>
-             setnames(old = "var_smooth", new = paste0("vs", x)) |>
-             as_tibble()
-           return(z)
-         }) |> 
-  reduce(left_join, by = join_by(Domain)) |> 
-  rename(id = Domain) |> 
-  left_join(dta4_vcov_1, by = join_by(id)) |> 
-  as_tibble()
+# echo: true
+# varcols <- dta4_vcov_1 |> select(starts_with("v_")) |> names()
+# dta4_smooth <- dta4_vcov_1 |> 
+#   left_join(dta4_direct |>
+#               filter(year == first(year)) |>
+#               select(id, N), by = join_by(id))
+# dta4_smooth <-
+#   lapply(X = varcols,
+#          FUN = function(x){
+#            z <- varsmoothie_king(domain = dta4_smooth[[area_var]],
+#                                  direct_var = dta4_smooth[[x]],
+#                                  sampsize = dta4_smooth[["N"]]) |>
+#              as.data.table() |>
+#              setnames(old = "var_smooth", new = paste0("vs", x)) |>
+#              as_tibble()
+#            return(z)
+#          }) |> 
+#   reduce(left_join, by = join_by(Domain)) |> 
+#   rename(id = Domain) |> 
+#   left_join(dta4_vcov_1, by = join_by(id)) |> 
+#   as_tibble()
 ```
 
 Now, you can replace the zero/near zero sample size area MSEs with their smoothed variances.
@@ -470,8 +601,8 @@ Now, you can replace the zero/near zero sample size area MSEs with their smoothe
 
 ```{r saving}
 bd_clean |> pin_write(dta4_direct, name = "pov_direct", type = "rds")
-bd_clean |> pin_write(dta4_vcov_1, name = "pov_vcov_balanced", type = "rds")
-bd_clean |> pin_write(dta4_vcov_2, name = "pov_vcov_paired", type = "rds")
+# bd_clean |> pin_write(dta4_vcov_1, name = "pov_vcov_balanced", type = "rds")
+# bd_clean |> pin_write(dta4_vcov_2, name = "pov_vcov_paired", type = "rds")
 ```
 
 ## Displaying the direct estimates results
@@ -485,16 +616,121 @@ library(scales)
 library(patchwork)
 library(biscale)
 
-geoms <- board_folder('data/clean') |> pin_read("geometries")
-geoms <- geoms$level4
+geoms <-  bd_clean |> pin_read("geometries")
 pov_direct <- bd_clean |> pin_read("pov_direct")
 
-dta_geom_dir <- 
-  geoms |> 
-  mutate(id = rep_len(unique(pov_direct$id), length.out = nrow(x = geoms))) |> 
-  left_join(pov_direct) |> 
-  as_tibble() |> 
-  st_as_sf()
+
+geom_nuts3 <- geoms$level4 |> rename(subcode = id)
+geom_nuts2 <- geoms$level2
+
+dta_geom_dir <-
+  geom_nuts3 |>
+  left_join(pov_direct, by = join_by(subcode)) |>
+  as_tibble() |>
+  st_as_sf() |>
+  filter(type == "arop")
+
+all_plots <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) 
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = pov),
+        color = "white",
+        size = 0.1
+      ) +
+      scale_fill_viridis_c("Poverty rate") +
+      labs(title = glue("Direct estimates in {.x}")) +
+      theme_bw() + 
+      geom_sf(data = geom_nuts2, fill = NA, colour = "red")
+    set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one <- 
+  all_plots |>
+  reduce( ~ .x + .y)
+
+ggsave(
+  filename = glue("output/pov-direct-all.png"),
+  plot = all_plots_one,
+  width = 12,
+  height = 8
+)
+
+
+
+all_plots2 <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) 
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = SD),
+        color = "white",
+        size = 0.1
+      ) +
+      scale_fill_viridis_b("SE") +
+      labs(title = glue("Direct estimates in {.x}")) +
+      theme_bw() + 
+      geom_sf(data = geom_nuts2, fill = NA, colour = "red")
+    set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one_2 <- all_plots2 |> reduce( ~ .x + .y) 
+
+ggsave(
+  filename = glue("output/pov-direct-all-sd.png"),
+  plot = all_plots_one_2,
+  width = 12,
+  height = 8
+)
+
+
+
+all_plots3 <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) 
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = CV),
+        color = "white",
+        size = 0.1
+      ) +
+      scale_fill_viridis_b("CV", n.breaks = 8) +
+      labs(title = glue("Direct estimates in {.x}")) +
+      theme_bw() + 
+      geom_sf(data = geom_nuts2, fill = NA, colour = "red")
+    set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one_3 <- all_plots3 |> reduce( ~ .x + .y) 
+
+ggsave(
+  filename = glue("output/pov-direct-all-cv.png"),
+  plot = all_plots_one_3,
+  width = 12,
+  height = 8
+)
 
 dta_geom_dir$year |> 
   unique() |> 
@@ -504,7 +740,7 @@ dta_geom_dir$year |>
       dta_geom_dir |>
       filter(year == .x) |>
       bi_class(x = pov,
-               y = CV,
+               y = SD,
                style = "quantile",
                dim = 3)
     
@@ -525,7 +761,7 @@ dta_geom_dir$year |>
       pal = "GrPink",
       dim = 3,
       xlab = "Higher poverty",
-      ylab = "Higher CV ",
+      ylab = "Higher SD",
       size = 8
     )
     
@@ -541,8 +777,40 @@ dta_geom_dir$year |>
       width = 8,
       height = 6
     )
-    
   })
+
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  mutate(
+    nuts3_name = str_c(nuts3_name, " (", N, ")"),
+    nuts3_name = as_factor(nuts3_name) |> fct_reorder(N)) |> 
+  ggplot() + 
+  aes(x = nuts3_name, y = CV) + 
+  geom_bar(stat = "identity") + 
+  theme_bw() + 
+  ggplot2::coord_flip()
+  scale_x_discrete() |>
+  theme(text)
+  geom_bar()
+  group_by()
+  
+library(ggrepel)
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  ggplot() + 
+  aes(x = N, y = CV, label = nuts3_name) + 
+  geom_point() + 
+  geom_smooth(se=T) + 
+  ggrepel::geom_label_repel()
+
+
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  ggplot() + 
+  aes(x = N, y = SD, label = nuts3_name) + 
+  geom_point() + 
+  geom_smooth(se=T) + 
+  ggrepel::geom_label_repel(force = T, max.overlaps = 100)
 
 # unique(dta_geom_dir$year) |>
 #   map(~{
