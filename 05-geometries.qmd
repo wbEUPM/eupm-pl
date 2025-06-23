@@ -24,30 +24,28 @@ if ("try-error" %in% class(try(params$eval_all)))
 #| error: false
 
 # Libraries
-library(purrr)
-library(tidyr)
-library(pins)
-library(readxl)
-library(arrow)
-library(glue)
-library(stringr)
-library(forcats)
-
-library(ggplot2)
-library(scales)
-library(patchwork)
-
-library(sf)
-library(mapview)
-library(flextable)
-library(ftExtra)
-library(knitr)
-library(htmltools)
-
-library(dplyr)
-
-# Poland's database API
-library(bdl)
+pacman::p_load(
+  caret, 
+  emdi,
+  MASS,
+  Matrix,
+  matrixcalc, 
+  survey,
+  pins, 
+  readxl, 
+  arrow, 
+  glue, 
+  stringr,
+  forcats,
+  ggplot2, 
+  scales,
+  patchwork,
+  sf, flextable, ftExtra, 
+  knitr, htmltools, dplyr,
+  bdl, # Poland's database API
+  data.table,
+  tidyverse
+)
 
 # Chunk setup
 knitr::opts_chunk$set(

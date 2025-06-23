@@ -22,10 +22,6 @@
 #' @import matrixcalc
 #' @export
 
-library(MASS)
-library(Matrix)
-library(matrixcalc)
-
 pbmcpeMFH2 <- function(formula, vardir, nB = 100, data, ...) {
 
   nD <- nrow(data)
@@ -161,20 +157,3 @@ pbmcpeMFH2 <- function(formula, vardir, nB = 100, data, ...) {
     fails = countfail
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
