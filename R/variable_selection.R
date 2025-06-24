@@ -16,7 +16,9 @@ step_wrapper <- function(dt,
                          xvars, 
                          y, 
                          cor_thresh = 0.95, 
-                         k) {
+                         k,
+                         trace = 0,
+                         ...) {
   
   dt <- as.data.table(dt)
   
@@ -72,7 +74,7 @@ step_wrapper <- function(dt,
   # Stepwise selection
   stepwise_model <- stepAIC(full_model, 
                             direction = "both", 
-                            trace = 0,
+                            trace = trace,
                             k = k)
   
   return(stepwise_model)

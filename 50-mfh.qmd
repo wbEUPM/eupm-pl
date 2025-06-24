@@ -1,8 +1,8 @@
 ---
-title: "Stable FH Estimates over T Time Periods: The Multivariate Fay Herriot Modelling Approach"
+title: "The Multivariate Fay Herriot"
 author: "Ifeanyi Edochie"
 format: html
-editor: visual
+editor: source
 bibliography: references.bib
 ---
 
@@ -24,7 +24,6 @@ knitr::opts_chunk$set(
 pacman::p_load(
   sf, 
   data.table, 
-  tidyverse, 
   car, 
   msae,
   sae, 
@@ -43,7 +42,10 @@ pacman::p_load(
   dplyr, 
   tictoc,
   gt,
-  matrixcalc
+  matrixcalc,
+  tidyverse,
+  modelsummary,
+  flextable
   )
 
 # Loading locally-developed
@@ -100,175 +102,69 @@ The rest of this tutorial shows how to prepare MFH models using a random 10% sam
 
 The MFH estimation process relies on 3 types of data:
 
-(1) The data containing the outcome variable from which direct estimates will be computed. This is a usually a survey dataset for each year of data including outcome variable (such as income or welfare aggregates), weights, cluster identifiers (i.e. if available, psu or enumeration areas) at the unit level i.e. individual or household. In this example, we call this: `survey_dt`
+(1) Direct estimates of poverty and its variance: `direct_dt`
 
-(2) A dataset containing for the right hand side (RHS) variables i.e. indicator estimates representative at the level of the target area for each year. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id, year and variables of interest. In this example, we call this `rhs_dt`
+(2) Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each year. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id, year and variables of interest. In this example, we call this `rhs_dt`
 
-(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`
+(3) Finally, geospatial boundaries of each target area: `shp_dt`
 
 ```{r dta-load}
-#| echo: true
-direct_dt <- bd_clean |> pin_read("pov_direct")
+#| echo: false
 
-colnames(direct_dt)[colnames(direct_dt) == "subcode"] <- "ID"
+# Direct estimates load 
+direct_dt <- bd_clean |> pin_read("pov_direct") |> 
+  rename(id = subcode) |> 
+  filter(type == "arop")
 
-#' Quick function to clean the right hand side variables dataset
-#' 
-#' @param rhs_dt `data.frame` object for the right hand side variables
-#' 
-#' @export
-#' 
-
-clean_rhs <- function(rhs_dt){
-  
-    ### let us reconstruct the column names 
-  # first select the relevant columns
-  relcols <- colnames(rhs_dt)[grepl(pattern = "^X\\d+|^\\.\\.\\.\\d+", 
-                                    x = colnames(rhs_dt))]
-  
-  current_label <- NA
-  
-  new_labels <- character(length(relcols))
-  
-  for (i in seq_along(relcols)){
-      
-      if (grepl("^X\\d+$", relcols[i])) {
-      current_label <- relcols[i]      # update current X-label
-      new_labels[i] <- current_label
-      } else if (grepl("^\\.\\.\\.\\d+$", relcols[i])) {
-      new_labels[i] <- current_label  # assign to last seen X-label
-      } else {
-      new_labels[i] <- cols[i]  # for ID columns etc.
-      }
-    
-    }
-  
-  relcols <- new_labels
-  
-  rowtwo_list <- 
-    rhs_dt[1,] |> 
-    as.list() |> 
-    unlist() |> 
-    unname() |>
-    str_replace_na(replacement = "")
-  
-  new_labels <- c(colnames(rhs_dt)[!grepl(pattern = "^X\\d+|^\\.\\.\\.\\d+", 
-                                    x = colnames(rhs_dt))],
-                  new_labels)
-  
-  colnames(rhs_dt) <- 
-    tibble(rowtwo_list,
-           new_labels) |>
-    mutate(y = ifelse(grepl(pattern = "^X\\d+", x = new_labels), "y", ""),
-           varnames = paste0(new_labels, y, rowtwo_list)) |>
-    dplyr::select(varnames) |>
-    unlist() |>
-    unname()
-  
-  rhs_dt <- rhs_dt[-1,]
-  
-  return(rhs_dt)
-  
-} 
-
-widerhs_dt <- 
+# RHS variables
+widerhs_dt <-
   paste0(root_raw, "/data-other", "/auxiliary-variables.xlsx") |>
-  readxl::read_excel()
+  readxl::read_excel() |> 
+  clean_rhs() |>
+  rename(id = ID) |> 
+  select(-No., -Subregion)
 
+rhs_vars <- paste0(root_raw, "/data-other", "/auxiliary-variables.xlsx") |>
+  readxl::read_excel(sheet = 2) |> 
+  select(var = Variable, category = `Category of variable` , name = `Variable (in English)`)
 
-widerhs_dt <- clean_rhs(rhs_dt = widerhs_dt)
-
-
-  
+# Geometries
 shp_dt <- bd_clean |> pin_read("geometries")
+shp_dt <- shp_dt$level4
+geoms <-  bd_clean |> pin_read("geometries")
+geom_nuts3 <- geoms$level4 |> rename(subcode = id)
+geom_nuts2 <- geoms$level2
 
-
-#### a little bit of housekeeping
-area_vars <- c("ID", "No.", "Subregion") ### both variables are at the same level. if the levels vary, you would need to combine both variables for effect use
-
-# cluster_var <- "ea_id"
-# weight_var <- "weight"
+# Key variable names
+area_vars <- c("id") 
 year_var <- "year"
 directpov <- "pov"
-# povline_var <- "povline"
 directvar <- "vardir"
-
-year_set <- unique(direct_dt$year)[2:4]
-
-
-
+year_set <- c(2019:2023)
 ```
 
-Below is what our datasets look like. These are generally the variables
+Data structure:
 
 ```{r}
-survey_dt |> glimpse()
+#| eval: false
+direct_dt |> glimpse()
 ```
 
-`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
+`direct_dt` are the direct poverty estimates.
 
 ```{r}
-rhs_dt |> glimpse()
+#| eval: false
+widerhs_dt |> glimpse()
 ```
 
 `rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
 ```{r}
-shp_dt |> glimpse()
+#| eval: false
+# shp_dt |> glimpse()
 ```
 
 `shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
-
-A quick summary table on the data needs for the MFH model:
-
-```{r}
-
-
-
-
-# Create the table content
-mfh_table <- tibble::tibble(
-  Dataset = c("`survey_dt`", "`rhs_dt`", "`shp_dt`"),
-  `Unit of Observation` = c(
-    "Individual (or Household)",
-    "Target Area (e.g. Province)",
-    "Target Area (Spatial)"
-  ),
-  `Required Variables` = c(
-    "`target area identifiers`, `weights`, `cluster identifier`, year, `income/welfare variable`, `poverty line`",
-    "`target area identifiers`, `year`, `covariates` (e.g. `gen`, `educ1`, `schyrs`, etc.)",
-    "`target area identifiers`, `geometries` (e.g. `geometry` column from `sf`)"
-  )
-)
-
-# Build the gt table
-mfh_table %>%
-  gt() %>%
-  tab_header(
-    title = md("**Data Input Checklist for the Multivariate Fay-Herriot Model**"),
-    subtitle = md("*Datasets, levels, and Required variables*")
-  ) %>%
-  cols_label(
-    Dataset = "Dataset Name",
-    `Unit of Observation` = "Unit of Observation",
-    `Required Variables` = "Required Variables"
-  ) %>%
-  tab_options(
-    table.font.names = "Arial",
-    heading.title.font.size = 16,
-    heading.subtitle.font.size = 12,
-    table.font.size = 12,
-    column_labels.font.weight = "bold",
-    data_row.padding = px(4),
-    table.border.top.width = px(2),
-    table.border.bottom.width = px(2),
-    heading.align = "left"
-  ) %>%
-  fmt_markdown(columns = everything())
-```
-
-For ease of use of this tutorial, make sure the variable names match as described across the datasets i.e. use the same target area variables and year variable name across all 3 datasets.
-
 
 ## Step 2: Variable Preparation and Model Selection
 
@@ -277,54 +173,34 @@ For ease of use of this tutorial, make sure the variable names match as describe
 Thus far, we have careful set up the types of data we require for the MFH model. One final step of variable preparation is necessary to use the `eblupUFH` and `eblupMFH` functions. This requires that we reshape the set of candidate variables dataset i.e. the `rhs_dt` object into wide format. We will also have to reshape our direct estimates and merge this into `rhs_dt` as well as `var_dt`. All the data we have created thus far needs to be placed together ultimately for the EBLUP estimation.
 
 ```{r}
-#| echo: true
-
-# ## reshaping the rhs_dt from long to wide
-# widerhs_dt <- 
-#   rhs_dt |>
-#   pivot_wider(
-#     id_cols = dplyr::all_of(area_vars),
-#     names_from = dplyr::all_of(year_var),
-#     values_from = dplyr::all_of(candidate_vars),
-#     names_glue = "{.value}{year}",
-#     values_fn = \(x) dplyr::first(x)  # or `first`, or something more explicit if needed
-#   )
-
-
-
-
-## now let us reshape and merge in the poverty rates
-
-mfh_dt <- 
+#| echo: false
+mfh_dt0 <- 
   direct_dt |>
+  select(id, year, all_of(c(year_var, directpov, directvar))) |> 
   pivot_wider(
-    id_cols = area_vars[[1]],
+    id_cols = area_vars,
     names_from = all_of(year_var),
     values_from = all_of(c(directpov, directvar)),
     names_glue = "{.value}{year}",
-    values_fn = ~ dplyr::first(na.omit(.x))  # or `first`, or something more explicit if neede
+    values_fn = ~ dplyr::first(na.omit(.x))
   ) |>
-  merge(y = widerhs_dt,
-        by = area_vars[[1]]) 
-
-
+  left_join(widerhs_dt, by = area_vars)
 ```
 
 Here is what the data looks like:
 
 ```{r}
-#| echo: true
-mfh_dt |> glimpse()
+#| echo: false
+#| eval: false
+mfh_dt0 |> glimpse()
 ```
 
 ### Variable Preparation
 
 ```{r var-preparation}
-
 # Identify the columns of interest
-x_vars <- names(mfh_dt) %>% str_subset("^X\\d+y\\d+")
-
-numeric_x_vars <- x_vars[sapply(mfh_dt[x_vars], is.numeric)]
+x_vars <- mfh_dt0 |> select(matches("^X\\d+y\\d+")) |> names()
+x_vars_numeric <- x_vars[sapply(mfh_dt0[x_vars], is.numeric)]
 
 # Function to min-max scale
 min_max_scale <- function(x) {
@@ -333,139 +209,104 @@ min_max_scale <- function(x) {
 }
 
 # Mutate log and scaled versions
-mfh_dt <- 
-mfh_dt %>%
+mfh_dt <-
+  mfh_dt0 %>%
   mutate(
     # Add log-transformed columns
-    across(all_of(numeric_x_vars), 
-           .fns = ~ log1p(.), 
-           .names = "log{.col}"),
+    across(all_of(x_vars_numeric), .fns = ~ log1p(.), .names = "log{.col}"),
     
     # Add min-max scaled columns
-    across(all_of(numeric_x_vars), 
-           .fns = ~ min_max_scale(.), 
-           .names = "scaled{.col}")
+    across(all_of(x_vars_numeric), .fns = ~ min_max_scale(.), .names = "scaled{.col}")
   )
-
-
-
-
 ```
 
-
-
-### Variable Selection Process
+### Variable Selection
 
 Next, we apply a simple variable selection process which employs the stepwise regression algorithm using the AIC selection criteria as in described by [@yamashita2007stepwise]. The function `step_wrapper()` implemented below is a wrapper to the `stepAIC()` function carries all the perfunctory cleaning necessary use the `stepAIC()` function. This includes dropping columns that are entirely missing (`NA`) and keep only complete cases/observations and remove perfectly or near collinear variables and combinations using the variance inflation method.
 
 ```{r var-selection}
-#| echo: true
-# candidate_vars <- 
-#   expand.grid(var = candidate_vars,
-#               year = unique(survey_dt[[year_var]])) |>
-#   transform(name = paste0(var, year)) |>
-#   dplyr::select(name) |>
-#   unlist() |>
-#   unname()
-
-candidate_vars <- c(numeric_x_vars,
-                    paste0("log", numeric_x_vars),
-                    paste0("scaled", numeric_x_vars))
+#| echo: false
+candidate_vars <- c(#x_vars_numeric,
+                    paste0("log", x_vars_numeric)#,
+                    # paste0("scaled", x_vars_numeric)
+                    )
 
 bad_vars <- candidate_vars[sapply(mfh_dt[candidate_vars], function(col) any(!is.finite(col)))]
-
 candidate_vars <- candidate_vars[!candidate_vars %in% bad_vars]
-  
-# ## extract the year identifiers in each variance covariance name
-# varyear_list <- stringr::str_extract_all(varcols, "\\d{4}")
-# 
-# ## Keep only those where both years are the same i.e. the variances
-# variance_cols <- varcols[lengths(varyear_list) == 2 & 
-#                            sapply(varyear_list, function(x) x[1] == x[2])]
 
-# ## replace the variances-covariances that are zero or near zero with their smoothed counterparts
-# mfh_dt <- 
-#   mfh_dt |>
-#   mutate(across(
-#     starts_with("v_"),
-#     ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
-#     .names = "{.col}"
-#   ))
 
 fh_step <-
-  lapply(X = paste0(directpov, unique(direct_dt[[year_var]])),
-         FUN = function(x){
-
-           model_obj <-
-           step_wrapper(dt = mfh_dt,
-                        xvars = candidate_vars,
-                        y = x,
-                        cor_thresh = 0.9,
-                        k = log(nrow(mfh_dt))) ### using log(n) to force BIC selection
-
-           xx <- names(model_obj$coefficients)[!grepl("(Intercept)",
-                                                      names(model_obj$coefficients))]
-           return(xx)
-
-         })
-
-
-# mfh_formula <- 
-#   mapply(x = paste0("direct_povrate", unique(survey_dt[[year_var]])),
-#          y = variance_cols,
-#          FUN = function(x, y){
-#            
-#            fh_step <- step_wrapper_fh(dt = mfh_dt,
-#                                       xvars = candidate_vars,
-#                                       y = x,
-#                                       cor_thresh = 0.8,
-#                                       criteria = "BIC",
-#                                       vardir = y,
-#                                       transformation = "no")
-#            
-#            return(fh_step$fixed)
-# 
-#          },
-#          SIMPLIFY = FALSE)
+  year_set |>
+  map( ~ {
+    year_local <- .x |> as.character()
+    year_local_lag <- as.character(as.numeric(year_local) - 1)
+    candidate_vars_local <- candidate_vars[str_detect(candidate_vars, year_local_lag)]
+    dta_local <- mfh_dt |> as_tibble() |> 
+      dplyr::select(contains("pov"), contains(year_local_lag))
+    y_local <- mfh_dt |> dplyr::select(contains("pov")) |> 
+      dplyr::select(contains(year_local)) |> names()
+    # browser()
+    model_obj <-
+      step_wrapper(
+        dt = dta_local,
+        xvars = candidate_vars_local,
+        y = y_local,
+        cor_thresh = 0.8,
+        k = 2,
+        trace = 0
+      ) ### using log(n) to force BIC selection
+    
+    xx <- names(model_obj$coefficients)[!grepl("(Intercept)", names(model_obj$coefficients))]
+    return(xx)
+  })
 
 
+# Set of formulas for the Multivariate FH
 mfh_formula <-
   mapply(FUN = function(x, rhs){
-
     y <- as.formula(paste0(x, " ~ ", paste(rhs, collapse = " + ")))
-
     return(y)
-
   },
-  x = paste0(directpov, unique(direct_dt[[year_var]])),
+  x = paste0(directpov, year_set),
   rhs = fh_step,
   SIMPLIFY = FALSE)
 
 ### here is what the 3 equations look like
-lapply(mfh_formula,
-       FUN = function(x){
-         
-         y <- lm(x, data = mfh_dt)
-         
-         summary(y)
-         
-       })
-
+mfh_formula |> 
+  map(~lm(.x, data = mfh_dt)) |> 
+  modelsummary(
+    output = "flextable", 
+    estimate = "{estimate}{stars} ({std.error})", 
+    statistic = NULL,
+    coef_rename = function(x) {
+      x |>
+        str_remove_all("y\\d{4}") |> 
+        map_chr( ~ {
+          match_coef <- rhs_vars |> filter(var == str_replace(.x, "log", "")) |> pull(name)
+          # browser()
+          if (is.null(match_coef) | length(match_coef) == 0) {
+            return(.x)
+          } else {
+            return(match_coef)
+          }
+        })
+      
+    }
+  ) |> 
+  autofit() |> 
+  width(j = 1, width = 3)
 ```
+
+Notes: Significance levels are: `***` p-value < 0.001, `***` p-value < 0.01, `*` p-value < 0.05, `+` p-value < 0.1 
 
 ## Step 3: Fitting the Multivariate Fay Herriot Model
 
 Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
 
 ```{r mvfh-est}
-#| echo: true
+#| echo: false
 #| eval: false
-# mfh_dt1 <- mfh_dt |> mutate(across(contains("v_pov_"), ~ 0.1)) |> as_tibble()
-
-### create the appropriate set of variance covariance variables depending on what years of data are selected
-
 prepare_vcov <- function(){
-  
   vc <- paste0(directvar, year_set)
   
   # Generate all unique pairs (upper triangle only, including diagonal)
@@ -485,16 +326,10 @@ prepare_vcov <- function(){
 }
 
 mfh_dt[, prepare_vcov()] <- 0
-
-varcols <- c(paste0(directvar, year_set),
-             prepare_vcov())
-
-
-
+varcols <- c(paste0(directvar, year_set), prepare_vcov())
 yvars <- paste0(directpov, year_set)
 
-
-# univariate FH
+# Univariate FH
 model0_obj <- eblupUFH(mfh_formula[yvars], vardir = varcols, data = mfh_dt)
 bd_out |> pin_write(model0_obj, type = "rds")
 
@@ -504,7 +339,7 @@ model1_obj <- eblupMFH1(mfh_formula[yvars],
                         vardir = varcols, 
                         data = mfh_dt, 
                         MAXITER = 10000, 
-                        PRECISION = 0.01)
+                        PRECISION = 0.001)
 bd_out |> pin_write(model1_obj, type = "rds")
 toc()
 
@@ -513,8 +348,8 @@ tic(msg = "eblupMFH2")
 model2_obj <- eblupMFH2(mfh_formula[yvars], 
                         vardir = varcols, 
                         data = mfh_dt, 
-                        MAXITER = 1e10, 
-                        PRECISION = 0.01)
+                        MAXITER = 10000, 
+                        PRECISION = 0.001)
 bd_out |> pin_write(model2_obj, type = "rds")
 toc()
 
@@ -526,9 +361,147 @@ model1_obj <- bd_out |> pin_read("model1_obj")
 model2_obj <- bd_out |> pin_read("model2_obj")
 ```
 
+
+Saving results of the models
+
+```{r res-save}
+# model0_obj
+ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
+  # ids <- mfh_dt |> select(id)
+  eblup_dt <- fit$eblup |> as_tibble()
+  mse_dt <- fit$MSE |> as_tibble() |> rename_with( ~ str_replace(., "pov", "vardir"))
+  
+  bind_cols(ids, eblup_dt, mse_dt) |>
+    pivot_longer(c(contains("pov"), contains("vardir"))) |>
+    mutate(year = str_extract(name, "\\d{4}") |> as.integer(),
+           name = str_remove(name, "\\d{4}")) |>
+    pivot_wider(values_from = value, names_from = name) |>
+    mutate(
+      CV  = sqrt(vardir) / pov,
+      SD = sqrt(vardir),
+      type = type,
+      estimate = estimate
+    )
+}
+
+pov_mfh <- 
+  # ext_mfh_dta(model0_obj,  select(mfh_dt, id), type = "arop", estimate = "UFH (MFH)") |> 
+  bind_rows(
+    ext_mfh_dta(model1_obj,  select(mfh_dt, id), type = "arop", estimate = "MFH-1")
+  ) |> 
+  bind_rows(
+    ext_mfh_dta(model2_obj,  select(mfh_dt, id), type = "arop", estimate = "MFH-2")
+  )
+  
+bd_clean |> pin_write(pov_mfh, name = "pov_mfh", type = "rds")
+```
+
+
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
 
 We now verify the assumptions of the MFH3 model. This includes assessing linearity, the normality of the predicted area effects and standardized residuals, as well as checking for the presence of outlying areas.
+
+### SE vs Poverty
+
+```{r}
+pov_mfh |> 
+  bind_rows(direct_dt |> mutate(estimate = "Direct")) |> 
+  ggplot() + 
+  aes(y = SD, x = pov, colour = estimate ) + 
+  geom_point() + 
+  geom_smooth() +
+  facet_wrap(. ~ year, scales = "free") + 
+  scale_y_continuous("SE") + 
+  theme_bw()
+```
+
+### CV vs Poverty
+
+```{r}
+pov_mfh |> 
+  bind_rows(direct_dt |> mutate(estimate = "Direct")) |> 
+  ggplot() + 
+  aes(y = CV, x = pov, colour = estimate ) + 
+  geom_point() + 
+  geom_smooth() +
+  facet_wrap(. ~ year, scales = "free") + 
+  scale_y_continuous("CV") + 
+  theme_bw()
+```
+
+### Direct vs MFH
+
+#### Poverty rate
+
+```{r}
+library(glue)
+pov_mfh_dir <- 
+  pov_mfh |> 
+  left_join(direct_dt |>
+              select(
+                id,
+                year,
+                pov_direct = pov,
+                SD_direct = SD,
+                CV_direct = CV
+              ),
+            by = join_by(id, year)
+            ) |> 
+  left_join(shp_dt) |> 
+  st_as_sf()
+
+pov_mfh_dir |>
+  fct_plot_scatter(
+    x_var = "pov_direct",
+    y_var = "pov",
+    colour_var = "estimate",
+    x_title_glue = "Poverty rate in direct estimates",
+    y_title_glue = "MFH poverty rate",
+    title_glue = "",
+    subtitile_glue = "",
+    legendtitle_glue = "Estimate",
+    scale_x_label = label_percent()
+  ) +
+  facet_wrap(. ~ year, scales = "free")
+```
+
+#### CV
+
+```{r}
+pov_mfh_dir |>
+  fct_plot_scatter(
+    x_var = "CV_direct",
+    y_var = "CV",
+    colour_var = "estimate",
+    x_title_glue = "CV in direct estimates",
+    y_title_glue = "MFH CV",
+    title_glue = "",
+    subtitile_glue = "",
+    legendtitle_glue = "Estimate",
+    scale_x_label = label_percent()
+  ) +
+  facet_wrap(. ~ year, scales = "free")
+```
+
+
+#### SE
+
+```{r}
+pov_mfh_dir |>
+  fct_plot_scatter(
+    x_var = "SD_direct",
+    y_var = "SD",
+    colour_var = "estimate",
+    x_title_glue = "SE in direct estimates",
+    y_title_glue = "MFH SE",
+    title_glue = "",
+    subtitile_glue = "",
+    legendtitle_glue = "Estimate",
+    scale_x_label = label_percent()
+  ) +
+  facet_wrap(. ~ year, scales = "free")
+```
+
 
 ### Linearity Test
 
@@ -537,9 +510,24 @@ To assess whether a linear regression model may be incorrectly specified — for
 We implement Ramsey’s RESET test in R using the resettest() function from the lmtest package:
 
 ```{r lin-test}
-#| echo: true
+#| echo: false
 ### lets create a dataframe with the errors and estimated poverty rates
 
+pov_mfh_dir |> 
+  mutate(error = pov_direct - pov) |>
+  fct_plot_scatter(
+    x_var = "pov_direct",
+    y_var = "error",
+    colour_var = "estimate",
+    x_title_glue = "Predicted poverty rate (MFH)",
+    y_title_glue = "Error terms",
+    title_glue = "",
+    subtitile_glue = "",
+    legendtitle_glue = "Estimate",
+    scale_x_label = label_number(0.0001)
+  ) +
+  facet_wrap(. ~ year, scales = "free")
+  
 eblup_dt <- model2_obj$eblup
 mse_dt <- model2_obj$MSE
 
@@ -547,56 +535,56 @@ colnames(eblup_dt) <- paste0("eblup_", colnames(eblup_dt))
 colnames(mse_dt) <- paste0("mse_", colnames(mse_dt))
 
 reset_dt <- bind_cols(eblup_dt, mse_dt) |> as_tibble()
-  
+
 ### lets perform the reset test on the pairs of variables as appropriate i.e. poverty = B0 + B1*MSE
 
-test_list <- 
-  lapply(unique(survey_dt[[year_var]]), function(x) {
-    
+test_list <-
+  lapply(year_set, function(x) {
+
     # Subset only the columns for year x
     dt <- reset_dt |>
       dplyr::select(matches(paste0(x, "$")))  # Select columns ending with current year
-    
+
     yvar <- colnames(dt)[grepl("^eblup_", colnames(dt))]
     xvar <- colnames(dt)[grepl("^mse_", colnames(dt))]
-    
+
     # Create formula with squared and cubed terms using I()
     form <- as.formula(paste0(
-      xvar, " ~ ", 
+      xvar, " ~ ",
       yvar, " + I(", yvar, "^2)"
     ))
-    
-    model_obj <- lm(form, data = dt)
-    
-    return(model_obj)
-    
-  })
 
-reset_dt2 <- 
-  reset_dt |> 
-  mutate(id = row_number()) |> 
-  pivot_longer(c(contains("eblup"), contains("mse"))) |> 
-  mutate(
-    year = str_extract(name, "\\d{4}") |> as.numeric(),
-    var =  str_extract(name, "eblup|mse")
-  ) |> 
-  dplyr::select(-name) |> 
-  pivot_wider(names_from = var, values_from = value )
-  
-reset_dt2 |> 
-  ggplot() + 
-  aes(x = eblup, y = mse) + 
-  geom_point() + 
-  facet_wrap(. ~ year) + 
-  geom_smooth() + 
-  theme_bw()
+    model_obj <- lm(form, data = dt)
+
+    return(model_obj)
+
+  })
+# 
+# reset_dt2 <- 
+#   reset_dt |> 
+#   mutate(id = row_number()) |> 
+#   pivot_longer(c(contains("eblup"), contains("mse"))) |> 
+#   mutate(
+#     year = str_extract(name, "\\d{4}") |> as.numeric(),
+#     var =  str_extract(name, "eblup|mse")
+#   ) |> 
+#   dplyr::select(-name) |> 
+#   pivot_wider(names_from = var, values_from = value )
+#   
+# reset_dt2 |> 
+#   ggplot() + 
+#   aes(x = eblup, y = mse) + 
+#   geom_point() + 
+#   facet_wrap(. ~ year) + 
+#   geom_smooth() + 
+#   theme_bw()
 
 ```
 
 Here is what the results look like:
 
 ```{r}
-#| echo: true
+#| echo: false
 test_list %>% lapply(X = ., FUN = summary)
 ```
 
@@ -611,7 +599,7 @@ We use the shapiro wilks test of normality using the `shapiro.test()` function i
 First, we perform the shapiro wilks normality test on the model errors, $\varepsilon$. We show both the normality distribution histogram as well as the qqplots as below:
 
 ```{r sw-test}
-#| echo: true
+#| echo: false
 
 
 ### first lets replace the negative values with 0
@@ -620,7 +608,7 @@ eblup_dt[eblup_dt < 0] <- 0
 ### evaluating the normality assumption
 
 #### first lets create a residual table by looking at the difference between actual and predicted poverty rates
-resid_dt <- mfh_dt[,paste0("direct_povrate", unique(survey_dt[[year_var]]))] - eblup_dt
+resid_dt <- mfh_dt[,paste0("pov", year_set)] - eblup_dt
 
 ### perform the shapiro test
 
@@ -720,8 +708,6 @@ raneff_dt %>%
   facet_wrap(~Time, scales = "free") + 
   theme_minimal() + 
   labs(title = "Random Effects Histograms by Time Period")
-
-
 ```
 
 In both cases, we compare the p-value to the 0.05 level of significance. The results suggest that in most cases we have to reject the null hypothesis of normally distributed model errors and random effects. This doesn't affect the validity of our poverty estimates for the Multivariate Fay Herriot model. However, subsequent analysis that will assume a normal distribution of the model errors cannot be performed. One good example of this is the statistical significance test for changes in poverty rates over time. For the purposes of this tutorial, we will carry on to show how to perform this under the assumption of normally distributed model errors. However, if the test for normality fails, this test cannot be carried out.
@@ -733,407 +719,256 @@ Next, we will show the benefits of small area estimation over direct estimation
 ```{r, warning=FALSE, message = FALSE, error = FALSE}
 #| echo: true
 
-model2mse_dt <- 
-  model2_obj$MSE |>
-  mutate(!!sym(area_vars[[1]]) := 1:n()) |>
-  pivot_longer(
-    cols = starts_with("direct_povrate"),
-    names_to = "year",
-    names_pattern = "direct_povrate(\\d+)",  # Extract just the digits
-    values_to = "modelMSE"
-  ) |>
-  mutate(year = as.integer(year))
+pov_mfh_dir_long <- 
+  pov_mfh |> 
+  bind_rows(direct_dt |>mutate(estimate = "Direct")) |> 
+  left_join(shp_dt) |> 
+  st_as_sf()
 
-model2pov_dt <- 
-  model2_obj$eblup |>
-  mutate(!!sym(area_vars[[1]]) := 1:n()) |>
-  pivot_longer(
-    cols = starts_with("direct_povrate"),
-    names_to = "year",
-    names_pattern = "direct_povrate(\\d+)",  # Extract just the digits
-    values_to = "modelpov"
-  ) |>
-  mutate(year = as.integer(year))
-
-model2pov_dt <- merge(model2mse_dt, model2pov_dt)
-
-
-model2pov_dt <- 
-  model2pov_dt |>
-  mutate(modelCV = sqrt(modelMSE) / modelpov)
-
-
-model2pov_dt <- merge(model2pov_dt, 
-                      direct_dt, 
-                      by = c(area_vars[[1]], 
-                             year_var))
-
-### compute direct CVs and include in `model2pov_dt`
-
-
-## we have to reshape the direct estimates data in mfh_dt from wide to long
-## and then merge with model2pov_dt 
-model2pov_dt <- 
-mfh_dt |>
-  dplyr::select(starts_with(variance_cols),  # add this!
-                all_of(area_vars[[1]])) |>
-  pivot_longer(
-    cols = -all_of(area_vars[[1]]),
-    names_to = "indicator_year",
-    values_to = "value"
-  ) |>
+pov_cv_year_dta <-
+  pov_mfh_dir_long |> 
+  mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
+  st_drop_geometry() |> 
+  arrange(year) |> 
   mutate(
-    type = case_when(
-      str_starts(indicator_year, "v_pov_indicator") ~ "variance"
-    ),
-    year = str_extract(indicator_year, "\\d{4}")
-  ) |>
-  dplyr::select(-indicator_year) |>
-  pivot_wider(
-    names_from = type,
-    values_from = value
-  ) |>
-  mutate(year = as.integer(year)) |>
-  merge(model2pov_dt,
-        by = c(area_vars[[1]], year_var),
-        all = TRUE) |>
-  mutate(direct_CV = sqrt(variance) / direct_povrate) |>
-  merge(sampsize_dt %>%
-          dplyr::select(!!sym(area_vars[1]), "N") |>
-          unique(), 
-        by = area_vars[[1]])
+    group_id = ifelse(year == 2011, 1, 2) |> str_c(estimate),
+    year = as_factor(year)) 
+
+pov_cv_year <-
+  pov_cv_year_dta |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "CV",
+               colour_var = "estimate",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "Coefficient of variance",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.001),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+ggsave(filename = "output/pov-mhf-cv-years-regions.png", 
+       plot = pov_cv_year, width = 15, height = 12, dpi = 200, scale = 1)
 
 
+pov_pov_year <-
+  pov_cv_year_dta |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "pov",
+               colour_var = "estimate",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "Poverty rate",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_percent(),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+ggsave(filename = "output/pov-mhf-pov-years-regions.png", 
+       plot = pov_pov_year, width = 15, height = 12, dpi = 200, scale = 1)
+
+pov_se_year <-
+  pov_cv_year_dta |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "SD",
+               colour_var = "estimate",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "SE",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.001),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+ggsave(filename = "output/pov-mhf-se-years-regions.png", 
+       plot = pov_se_year, width = 15, height = 12, dpi = 200, scale = 1)
 ```
 
-Now lets plot the direct against the model CVs to get a sense for the gains made as a result of applying the MFH modelling approach over direct estimation. We will also show the sample sizes for each year to show that large sample size reduce the gains from small area estimation.
+![CV across years by region](output/pov-mhf-cv-years-regions.png){#fig-reg-cv}
+
+![Poverty across years by region](output/pov-mhf-pov-years-regions.png){#fig-reg-pov}
+
+![SE across years by region](output/pov-mhf-se-years-regions.png){#fig-reg-se}
+
+## Poverty maps
 
 ```{r}
-#| echo: true
-#| fig-width: 15
-#| fig-height: 20
+pov_plots <-
+  pov_cv_year_dta |>
+  select(-name) |> 
+  left_join(shp_dt) |> 
+  st_as_sf() |> 
+  group_by(year2 = year, type2 = estimate) |>
+  nest() |> 
+  ungroup()  |>  
+  (\(x) {
+    expand_grid(year2 = x$year2, type2 = x$type2) |> 
+      distinct() |> 
+      left_join(x, by = join_by(year2, type2))
+  })() |> 
+  arrange(year2, type2) |> 
+  mutate(plot_poverty =
+           map(data, 
+               ~ {
+                 # browser()
+                 
+                 fct_map_chreplot(.x, var_fill = "pov",
+                                  subtitle_glue = "{estimate}: {year}", 
+                                  legend_glue = "Poverty",
+                                  force_breaks = c(0, .1, .15, .2, .25, .3, .35, .4, 0.55)
+                                  )}
+               )) |> 
+  mutate(plot_SE =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "SD", 
+                                  subtitle_glue = "{estimate}: {year}", 
+                                  legend_glue = "SE",
+                                  force_breaks = c(.005, .02, .03, .035, 
+                                                   .04, 0.055, 0.08, .15 ),
+                                  label_form = label_number(0.001) 
+                                  )))|> 
+  mutate(plot_CV =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "CV", 
+                                  subtitle_glue = "{estimate}: {year}", 
+                                  legend_glue = "CV",
+                                  force_breaks = c(.1, .2, .25, .3, .35, 
+                                                   0.4, .45, .5, 0.65),
+                                  label_form = label_number(0.01) 
+                                        )))
 
-numeric_cols <- sapply(model2pov_dt, is.numeric)
-model2pov_dt_clean <- model2pov_dt[complete.cases(model2pov_dt[, numeric_cols]) &
-                                     apply(model2pov_dt[, numeric_cols], 1, function(row)
-                                       all(is.finite(row))), ]
-  
-
-# Make year a factor using year_var
-model2pov_dt_clean[[year_var]] <- as.factor(model2pov_dt_clean[[year_var]])
-
-# Compute max values for scaling
-max_n <- max(model2pov_dt_clean$N, na.rm = TRUE)
-max_cv <- max(model2pov_dt_clean$direct_CV, na.rm = TRUE)
-
-# Create the plot
-ggplot(model2pov_dt_clean, aes(x = .data[[year_var]])) +
-  geom_line(aes(y = direct_CV, group = 1, color = "Direct CV"), size = 1) +
-  geom_line(aes(y = modelCV, group = 1, color = "Model CV"), size = 1) +
-  geom_point(aes(y = N / max_n * max_cv, color = "Sample Size (N)"),
-             shape = 1, size = 1.5) +
-  facet_wrap(vars(.data[[area_vars[[1]]]]), scales = "free_y") +
-  scale_y_continuous(
-    name = "Coefficient of Variation (CV)",
-    sec.axis = sec_axis(~ . * max_n / max_cv, name = "Sample Size (N)")
-  ) +
-  scale_color_manual(values = c("Direct CV" = "darkorange",
-                                "Model CV" = "steelblue",
-                                "Sample Size (N)" = "grey40")) +
-  labs(x = "Year", color = "") +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    axis.title.y.right = element_text(color = "grey40"),
-    axis.title.y.left = element_text(color = "black"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-```
-
-The other advantage of MFH estimation is the smoothing of the model estimates over the unit variate model. We can show this below as well:
-
-```{r}
-#| echo: true
-#| fig-width: 15
-#| fig-height: 20
-
-
-model2pov_dt[[year_var]] <- as.factor(model2pov_dt[[year_var]])
-
-## first lets merge in the results of the eblupUFH model
-
-ufh_dt <- 
-  model0_obj$eblup |>
-  mutate(!!sym(area_vars[[1]]) := 1:n()) |>
-  pivot_longer(
-    cols = starts_with("direct_povrate"),
-    names_to = "year",
-    names_pattern = "direct_povrate(\\d+)",  # Extract just the digits
-    values_to = "ufh_povrate"
-  )
-
-model2pov_dt <- merge(model2pov_dt,
-                      ufh_dt,
-                      by = c(area_vars[[1]], year_var))
-
-## now we make a similar plot but comparing the UFH vs MFH model estimates to check for the smoothness of the estimation 
-
-# Compute max values for scaling
-max_n <- max(model2pov_dt$N, na.rm = TRUE)
-
-
-ggplot(model2pov_dt, aes(x = .data[[year_var]])) +
-  geom_line(aes(y = ufh_povrate, group = 1, color = "UFH Poverty"), size = 1) +
-  geom_line(aes(y = modelpov, group = 1, color = "MFH Poverty"), size = 1) +
-  geom_point(aes(y = N / max_n, color = "Sample Size (N)"),
-             shape = 1, size = 1.5) +
-  facet_wrap(vars(.data[[area_vars[[1]]]]), scales = "free_y") +
-  scale_y_continuous(
-    name = "Poverty Rates",
-    sec.axis = sec_axis(~ . * max_n, name = "Sample Size (N)")
-  ) +
-  scale_color_manual(values = c("UFH Poverty" = "darkorange",
-                                "MFH Poverty" = "steelblue",
-                                "Sample Size (N)" = "grey40")) +
-  labs(x = "Year", color = "") +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    axis.title.y.right = element_text(color = "grey40"),
-    axis.title.y.left = element_text(color = "black"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
-
-
-
-```
-
-It can be seen from the plots that the provinces in with the highest variance in UFH poverty estimates tend to provide smoother MFH estimates particularly in the provinces with smaller samples. This shows the power of the MFH approach in taking advantage of the across year correlation of poverty.
-
-Next we will assume our model errors were normally distributed in order to show how to statistically test to see if poverty has changed between given years.
-
-### Did the poverty rates change over time?
-
-Next we can call the `pbmcpeMFH2()` function, which returns the EBLUP, as well as, the MSEs of the EBLUPs for each time point, and the MCPEs for each pair of time points based on the MFH model 2 as follows:
-
-```{r pbmcpeMFH2-est}
-#| echo: true
-#| eval: false
-set.seed(123)
-tic(pbmcpeMFH2)
-mcpemfh2_obj <- 
-  pbmcpeMFH2(formula = mfh_formula,
-           vardir = varcols,
-           nB = 50,
-           data = mfh_dt, 
-           MAXITER = 1e10, 
-           PRECISION = 1e-2)
-bd_clean |> pin_write(mcpemfh2_obj, type = "rds")
-toc()
-```
-
-```{r pbmcpeMFH2-load}
-mcpemfh2_obj <- bd_clean |> pin_read("mcpemfh2_obj")
 ```
 
 ```{r}
+plt1 <-
+  pov_plots |> 
+  filter(type2 == "MFH-2") |> 
+  pull(plot_poverty) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
 
-#' A function to compare and plot differences from the mcpe object
-#' 
-compare_mfh2 <- function(period_list = c(1,2),
-                         mcpe_obj = mcpemfh2_obj,
-                         alpha = 0.05){
-  
-  col_chr <- paste0("(", period_list[1], ",", period_list[2], ")")
+ggsave(
+    filename = "output/povmap_mfh2_pov.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt1)
 
-  df <- 
-    tibble(diff = mcpe_obj$eblup[,period_list[2]] - mcpe_obj$eblup[,period_list[1]],
-           mse = mcpe_obj$mse[,period_list[1]] + mcpe_obj$mse[,period_list[2]] - 2*mcpe_obj$mcpe[,col_chr],
-           alpha = rep(alpha, nrow(mcpe_obj$eblup)),
-           zq = qnorm(alpha / 2, lower.tail = F)) |>
-    mutate(lb = diff - zq * sqrt(mse),
-           ub = diff + zq * sqrt(mse)) |>
-    mutate(significant = ifelse(lb > 0 | ub < 0, 
-                                "Significant", 
-                                "Not Significant")) |>
-    mutate(index = row_number())
-  
-  p1 <- 
-  ggplot(df, aes(x = index, y = diff)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  geom_errorbar(aes(ymin = lb, ymax = ub, color = significant), width = 0.2, linewidth = 1) +
-  geom_point(color = "black", size = 2) +
-  scale_color_manual(values = c("Significant" = "red", "Not Significant" = "gray40")) +
-  labs(
-    x = "Area (Index)",
-    y = "Difference between time periods",
-    color = "Significance",
-    title = paste0("Change in Poverty Rates based on MCPE between period ", 
-                   period_list[1], 
-                   " and ", 
-                   period_list[2])
-  ) +
-  theme_minimal()
+
+plt2 <-
+  pov_plots |> 
+  filter(type2 == "MFH-2") |> 
+  pull(plot_CV) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+
+ggsave(
+    filename = "output/povmap_mfh2_cv.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt2)
+```
+
+![MHF2 Poverty map](output/povmap_mfh2_pov.png){#fig-mfh2-pov}
+
+![MHF2 CV](output/povmap_mfh2_pov.png){#fig-mfh2-cv}
+
+
+## Spatio-temporal trends in poverty by region
+
+```{r figcalc-tends}
+library(trend)
+library(broom)
+
+pov_trend_dta <- 
+  pov_cv_year_dta |> 
+  # st_drop_geometry() |> 
+  filter(year != 2011) |> 
+  group_by(id, type, estimate) |> 
+  nest() |> 
+  # mutate(mkt = map(data, ~{mk.test(.x$pov) |> glance()})) |> 
+  mutate(sen = map(data, ~{
+    # browser()
+    test_stat <- sens.slope(.x$pov) 
+    tibble(sen_slope = test_stat$estimates,
+           sen_pvalue = test_stat$p.value)
     
+    })) |> 
+  ungroup() |> 
+  unnest(c(sen)) |> 
+  left_join(shp_dt |> 
+              select(id, name) |> 
+              group_by(id) |> 
+              filter(row_number() == 1) |> 
+              ungroup()) |> 
+  mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
+  st_as_sf()  |>
+  group_by(type2 = estimate) |>
+  nest() |>
+  mutate(
+    trend_p = map(data, ~ {
+      .x |>
+        fct_map_chreplot(
+          var_fill = "sen_pvalue",
+          subtitle_glue = "P-value: {estimate}",
+          legend_glue = "P-value",
+          label_form = label_number(0.01),
+          force_breaks = c(0, 0.01, 0.05, 0.1, 1)
+        )
+    }),
+    trend_slope = map(data, ~ {
+      .x |>
+        fct_map_chreplot(
+          var_fill = "sen_slope",
+          subtitle_glue = "Slope: {estimate}",
+          legend_glue = "Slope",
+          label_form = label_number(0.0001),
+          force_breaks = c(-0.03, -0.015, -.01, -.005, 0, 0.005, 0.01, 0.025, 0.04)
+        )
+    })) 
+
+
+on_dta <- 
+  pov_trend_dta |> 
+  filter(type2 == "MFH-2") 
   
-  return(list(df = df,
-              plot = p1))
-  
-}
+plt <- 
+  pov_trend_dta$trend_p |> 
+  append(pov_trend_dta$trend_slope) |> 
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+
+ggsave(
+    filename = "output/pov_mhf-trends.png",
+    width = 15, height = 13, dpi = 300,
+    plot = plt)
 ```
 
-The above function takes the difference between any two time periods and prepares a table of differences for each area include the MCPE estimated error rates as well as lower and upper bounds given a specified confidence level. See the function implemented to compare periods 1 and 2 (years 2012 and 2013)
-
-```{r}
-#| echo: true
-comp12_obj <- compare_mfh2()
-comp23_obj <- compare_mfh2(period_list = c(2, 3))
-comp13_obj <- compare_mfh2(period_list = c(1, 3))
-```
-
-See the plots below
-
-```{r}
-comp12_obj$plot
-comp23_obj$plot
-comp13_obj$plot
-```
-
-See the data created
-
--   Comparing the years 2012 and 2013
-
-```{r}
-#| echo: true
-comp12_obj$df %>% head() %>% kable()
-```
-
--   Comparing the years 2013 and 2014
-
-```{r}
-#| echo: true
-comp23_obj$df %>% head() %>% kable()
-```
-
--   Comparing the years 2012 and 2014
-
-```{r}
-#| echo: true
-comp13_obj$df %>% head() %>% kable()
-```
-
-### Presenting Results
-
-Now that we have estimated the MFH models and run some diagnostics, we might be interested in the following:
-
--   presenting some poverty maps
-
-```{r}
-#| echo: true
-#| fig-width: 15
-#| fig-height: 8
-
-lapply(X = unique(survey_dt[[year_var]]),
-       FUN = function(x){
-         
-         shp_dt |>
-           merge(model2pov_dt %>% 
-                   filter(!!sym(year_var) == x) |>
-                   dplyr::select(!!sym(area_vars[[1]]), "modelpov"),
-                 by = area_vars[[1]]) |>
-           ggplot() + 
-           geom_sf(aes(fill = modelpov), color = NA) +
-            scale_fill_viridis(
-              name = "Poverty Map",
-              option = "magma",
-            ) +
-            theme_minimal() +
-            labs(
-              title = paste0("Spatial Distribution of Poverty ", x),
-              caption = "Data source: Author Calculation"
-            ) +
-            theme(
-              legend.position = "bottom",
-              axis.text = element_blank(),
-              axis.ticks = element_blank(),
-              panel.grid = element_blank()
-            )
-         
-       }) |>
-  Reduce(f = "+")
-  
-  
-
-```
-
--   quantifying poverty change by mapping the growth rates of poverty rates for all the time periods
-
-```{r}
-#| echo: true
-
-### lets work with our shapefile
-longpov_dt <- 
-  model2_obj$eblup |>
-  mutate(!!sym(area_vars[[1]]) := 1:n()) |>
-  pivot_longer(
-    cols = starts_with("direct_povrate"),
-    names_to = "year",
-    names_pattern = "direct_povrate(\\d+)",  # Extract just the digits
-    values_to = "modelpov"
-  )
-
-### lets perform a regression for each area of poverty rates against year 
-### and then we divide the slope variable by the average poverty rate
-
-shp_dt$growth_rate <- 
-longpov_dt |>
-  mutate(!!sym(year_var) := as.integer(!!sym(year_var))) |>
-  group_split(!!sym(area_vars[[1]])) %>%
-  lapply(X = .,
-         FUN = function(x){
-           
-           y <- lm(paste0("modelpov ~ ", year_var[[1]]), data = x)
-           
-           y <- coef(y)[2]
-           
-           delta <- y / (mean(x$modelpov, na.rm = TRUE))
-           
-           return(delta)
-           
-         }) |>
-  unlist() |>
-  unname()
-
-```
-
-Lets plot this like with a heatmap on a shapefile:
-
-```{r}
-#| echo: true
-
-# Cap growth rates at 1 just to get rid of the outlier
-shp_dt$growth_rate_capped <- pmin(shp_dt$growth_rate, 1)
-
-ggplot(shp_dt) +
-  geom_sf(aes(fill = growth_rate_capped), color = NA) +
-  scale_fill_viridis(
-    name = "Growth Rate (capped at 1)",
-    limits = c(min(shp_dt$growth_rate_capped), 0.5),
-    oob = squish,
-    option = "magma",
-  ) +
-  theme_minimal() +
-  labs(
-    title = "Spatial Distribution of Poverty Growth Rates",
-    subtitle = "Growth rates capped at 1 to reduce outlier effect",
-    caption = "Data source: Author Calculation"
-  ) +
-  theme(
-    legend.position = "bottom",
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    panel.grid = element_blank()
-  )
-
-```
+![SE across years by region](output/pov_mhf-trends.png){#fig-reg-time}

@@ -439,9 +439,9 @@
     },
     "bayestestR": {
       "Package": "bayestestR",
-      "Version": "0.15.2",
+      "Version": "0.16.0",
       "Source": "Repository",
-      "Repository": "RSPM",
+      "Repository": "CRAN",
       "Requirements": [
         "R",
         "datawizard",
@@ -451,7 +451,7 @@
         "stats",
         "utils"
       ],
-      "Hash": "768acac338a7a17a063e8bb88c58e611"
+      "Hash": "d414d099aa3b59a132a17fd8accf20fb"
     },
     "bdl": {
       "Package": "bdl",
@@ -489,6 +489,20 @@
         "R"
       ],
       "Hash": "ad123ab90aa2fc795512f61ff6939c4a"
+    },
+    "biscale": {
+      "Package": "biscale",
+      "Version": "1.0.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "classInt",
+        "ggplot2",
+        "stats",
+        "utils"
+      ],
+      "Hash": "43427f94ce2cfcb1cebc5b06dedd0460"
     },
     "bit": {
       "Package": "bit",
@@ -1211,6 +1225,17 @@
       ],
       "Hash": "e9651417729bbe7472e32b5027370e79"
     },
+    "extraDistr": {
+      "Package": "extraDistr",
+      "Version": "1.10.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "Rcpp"
+      ],
+      "Hash": "49235792aad38657fffef40802f614c5"
+    },
     "fansi": {
       "Package": "fansi",
       "Version": "1.0.6",
@@ -1896,16 +1921,16 @@
     },
     "insight": {
       "Package": "insight",
-      "Version": "1.1.0",
+      "Version": "1.3.0",
       "Source": "Repository",
-      "Repository": "RSPM",
+      "Repository": "CRAN",
       "Requirements": [
         "R",
         "methods",
         "stats",
         "utils"
       ],
-      "Hash": "74e4e733b28ed34f28179ea421a0a8bb"
+      "Hash": "a9326ba549f9d95e7887f5dd02d562a4"
     },
     "ipred": {
       "Package": "ipred",
@@ -2517,6 +2542,26 @@
       ],
       "Hash": "4f50122dc256b1b6996a4703fecea821"
     },
+    "modelsummary": {
+      "Package": "modelsummary",
+      "Version": "2.4.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "checkmate",
+        "data.table",
+        "generics",
+        "glue",
+        "insight",
+        "methods",
+        "parameters",
+        "performance",
+        "tables",
+        "tinytable"
+      ],
+      "Hash": "1b5b2a61e604139e3c8b5fa4952f7ae1"
+    },
     "modules": {
       "Package": "modules",
       "Version": "0.13.0",
@@ -2713,9 +2758,9 @@
     },
     "parameters": {
       "Package": "parameters",
-      "Version": "0.24.2",
+      "Version": "0.26.0",
       "Source": "Repository",
-      "Repository": "RSPM",
+      "Repository": "CRAN",
       "Requirements": [
         "R",
         "bayestestR",
@@ -2726,7 +2771,7 @@
         "stats",
         "utils"
       ],
-      "Hash": "95a8ce68abe12076e12047352cfa9a82"
+      "Hash": "338f8ab2f4f944adaa9f3f0e30b32f97"
     },
     "patchwork": {
       "Package": "patchwork",
@@ -2775,6 +2820,22 @@
         "numDeriv"
       ],
       "Hash": "938e6bbc4ac57534f8b43224506a8966"
+    },
+    "performance": {
+      "Package": "performance",
+      "Version": "0.14.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "bayestestR",
+        "datawizard",
+        "insight",
+        "methods",
+        "stats",
+        "utils"
+      ],
+      "Hash": "76e7003989afe1366ebc3e0dced1d2d1"
     },
     "pillar": {
       "Package": "pillar",
@@ -3975,6 +4036,20 @@
       ],
       "Hash": "f8b2924480a2679e2bad9750646112fe"
     },
+    "tables": {
+      "Package": "tables",
+      "Version": "0.9.31",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "htmltools",
+        "knitr",
+        "stats",
+        "utils"
+      ],
+      "Hash": "75c4d11d0b824c4c5d774cd659138bb6"
+    },
     "tensorA": {
       "Package": "tensorA",
       "Version": "0.36.2.1",
@@ -4148,6 +4223,17 @@
       ],
       "Hash": "c5f3c201b931cd6474d17d8700ccb1c8"
     },
+    "tinytable": {
+      "Package": "tinytable",
+      "Version": "0.9.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "methods"
+      ],
+      "Hash": "7ca6065729277068853265fa5b19a800"
+    },
     "tinytex": {
       "Package": "tinytex",
       "Version": "0.54",
@@ -4210,6 +4296,17 @@
         "viridisLite"
       ],
       "Hash": "dd597445fa5aa8adbcae4d1d222a6f78"
+    },
+    "trend": {
+      "Package": "trend",
+      "Version": "1.1.6",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "extraDistr"
+      ],
+      "Hash": "0a27351b603a59f590401bc1c3938da1"
     },
     "tzdb": {
       "Package": "tzdb",
