@@ -1,0 +1,880 @@
+---
+title: "Exploratory analysis of the poverty estaimates"
+# author: "Eduard Bukin" 
+format: html
+editor: source
+params:
+  eval_all: FALSE
+  harvest: FALSE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=FALSE}
+# Recollect data from the sources?
+if ("try-error" %in% class(try(params$eval_all)))
+  params <- list(eval_all = FALSE, harvest = FALSE)
+```
+
+```{r}
+#| label: setup
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+
+# Libraries
+pacman::p_load(
+  flextable, 
+  ftExtra, 
+  scales, 
+  tidyverse, 
+  stringr,
+  pins,
+  sf, 
+  ggplot2, 
+  cowplot,
+  ggrepel,
+  glue, 
+  scales, 
+  patchwork, 
+  biscale,
+  modelsummary
+)
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
+
+# Loading locally-developed
+list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
+  walk(source)
+
+# Raw data root
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+
+# Years range
+range <- c(2011, 2019:2030)
+```
+
+## Displaying the direct estimates results
+
+```{r dta-load}
+geoms <-  bd_clean |> pin_read("geometries")
+pov_direct <- bd_clean |> pin_read("pov_direct")
+geom_nuts3 <- geoms$level4 |> rename(subcode = id)
+geom_nuts2 <- geoms$level2
+
+dta_geom_dir <-
+  geom_nuts3 |>
+  left_join(pov_direct, by = join_by(subcode)) |>
+  as_tibble() |>
+  st_as_sf() 
+```
+
+## Descriptive statistcs
+
+### Poverty over time
+
+```{r tbl-arop}
+#| tbl-cap: AROP descriptive statistics
+datasummary(
+  ((`Poverty` = pov) + 
+     (`Standard error` = se) + 
+     (`Coef. variation` = CV)) *
+    (`Year` = year)  ~  
+    Mean + SD + Min + P50 + Max,
+  data = 
+    pov_direct |>
+    filter(type == "arop") |> 
+    rename(se = SD) |> 
+    mutate(year = as_factor(year)), 
+  output = "flextable", 
+  fmt = 3
+) |> 
+  autofit()
+```
+
+```{r tbl-arop-2019}
+#| tbl-cap: AROP ancored to 2019 descriptive statistics
+datasummary(
+  ((`Poverty` = pov) + 
+     (`Standard error` = se) + 
+     (`Coef. variation` = CV)) *
+    (`Year` = year)  ~  
+    Mean + SD + Min + P50 + Max,
+  data = 
+    pov_direct |>
+    filter(type == "arop19") |> 
+    rename(se = SD) |> 
+    mutate(year = as_factor(year)), 
+  output = "flextable", 
+  fmt = 3
+) |> 
+  autofit()
+```
+
+```{r tbl-arope}
+#| tbl-cap: AROPE descriptive statistics
+datasummary(
+  ((`Poverty` = pov) + 
+     (`Standard error` = se) + 
+     (`Coef. variation` = CV)) *
+    (`Year` = year)  ~  
+    Mean + SD + Min + P50 + Max,
+  data = 
+    pov_direct |>
+    filter(type == "arope") |> 
+    rename(se = SD) |> 
+    mutate(year = as_factor(year)), 
+  output = "flextable", 
+  fmt = 3
+) |> 
+  autofit()
+```
+
+### Differences accross poverty measures
+
+```{r}
+datasummary(
+  ((`Poverty` = pov) + 
+     (`Standard error` = se) + 
+     (`Coef. variation` = CV)) *
+    (`Year` = year)  ~  
+    ((`Mean` = Mean) + SD) * type,
+  data = 
+    pov_direct |>
+    rename(se = SD) |> 
+    mutate(year = as_factor(year)), 
+  output = "flextable", 
+  fmt = 3
+) |> 
+  autofit()
+```
+
+## Poverty maps
+
+```{r prep-plotting-1}
+# # Single-variable check
+# dta_geom_dir |>
+#   fct_map_chreplot(var_fill = "N",
+#                    fltr_year = 2011,
+#                    subtitle_glue = "{year}",
+#                    legend_glue = "N obs",
+#                    label_form = label_number(1))
+
+pov_plots <-
+  dta_geom_dir |> 
+  group_by(year2 = year, type2 = type) |>
+  nest() |> 
+  ungroup()  |>  
+  (\(x) {
+    expand_grid(year2 = x$year2, type2 = x$type2) |> 
+      distinct() |> 
+      left_join(x, by = join_by(year2, type2))
+  })() |> 
+  arrange(year2, type2) |> 
+  mutate(plot_poverty =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "pov",
+                                  subtitle_glue = "{type}: {year}", 
+                                  legend_glue = "Poverty",
+                                  force_breaks = c(0, .1, .15, .2, .25, .3, .35, .4, 0.55)
+                                  )
+               )) |> 
+  mutate(plot_SE =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "SD", 
+                                  subtitle_glue = "{type}: {year}", 
+                                  legend_glue = "SE",
+                                  force_breaks = c(.005, .02, .03, .035, 
+                                                   .04, 0.055, 0.08, .15 ),
+                                  label_form = label_number(0.001) 
+                                  )))|> 
+  mutate(plot_CV =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "CV", 
+                                  subtitle_glue = "{type}: {year}", 
+                                  legend_glue = "CV",
+                                  force_breaks = c(.1, .2, .25, .3, .35, 
+                                                   0.4, .45, .5, 0.65),
+                                  label_form = label_number(0.01) 
+                                        )))
+```
+
+```{r figcalc-dir-est-pov}
+plt1 <-
+  pov_plots |> 
+  filter(type2 == "arop") |> 
+  pull(plot_poverty) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+
+ggsave(
+    filename = "output/povmap_arop_direct.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt1)
+```
+
+
+![Direct estimates of poverty (arop)](output/povmap_arop_direct.png){#fig-dir-est-pov}
+
+```{r figcalc-dir-est-se}
+plt <- 
+  pov_plots |> 
+  filter(type2 == "arop") |> 
+  pull(plot_SE) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+
+ggsave(
+    filename = "output/povmap_arop_se.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt)
+```
+
+![SE of direct estimates of poverty (arop)](output/povmap_arop_se.png){#fig-dir-est-se}
+
+
+
+```{r figcalc-dir-est-cv}
+plt <- 
+  pov_plots |> 
+  filter(type2 == "arop") |> 
+  pull(plot_CV) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+
+ggsave(
+    filename = "output/povmap_arop_cv.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt)
+```
+
+![CV of direct estimates of poverty (arop)](output/povmap_arop_cv.png){#fig-dir-est-cv}
+
+## Mapping across poverty estimates and time
+
+```{r figcalc-pov-measure-year}
+plt <- 
+  pov_plots |> 
+  filter(year2 %in% c(2011, 2019, 2023)) |> 
+  ungroup() |> 
+  pull(plot_poverty) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+
+ggsave(
+    filename = "output/povmap_pov_years.png",
+    width = 15, height = 13, dpi = 300,
+    plot = plt)
+```
+
+
+![Comparing poverty measures over time](output/povmap_pov_years.png){#fig-pov-measure-year}
+
+## Comparing poverty estiamtes in cross-section
+
+```{r prep-plotting-2}
+# # One plot example 
+# dta_geom_dir |> 
+#   st_drop_geometry() |> 
+#   filter(year == 2021) |> 
+#   select(subcode, name, year, type, pov) |> 
+#   pivot_wider(names_from = type, values_from = pov) |> 
+#   (\(x){
+#     x |> 
+#       select(-arop) |> 
+#       pivot_longer(c(everything(), -subcode, -name, -year), names_to = "type") |> 
+#       left_join(x |> select(subcode, name, year, arop),
+#                 by = join_by(subcode, name, year)) |> 
+#       filter(type != "arop")
+#   })() |> 
+#   
+#   fct_plot_scatter(
+#     x_var = "arop",
+#     y_var = "value", 
+#     colour_var = "type", 
+#     x_title_glue = "Poverty rate (AROP)", 
+#     y_title_glue = "Other poverty measures",
+#     title_glue = "",
+#     subtitile_glue = "{year}", 
+#     legendtitle_glue = "Measure", 
+#     scale_x_label = label_percent()
+#   )
+  
+pov_plots_year <-
+  dta_geom_dir |> 
+  st_drop_geometry() |> 
+  select(subcode, name, year, type, pov) |> 
+  pivot_wider(names_from = type, values_from = pov) |> 
+  (\(x){
+    x |> 
+      select(-arop) |> 
+      pivot_longer(c(everything(), -subcode, -name, -year), names_to = "type") |> 
+      left_join(x |> select(subcode, name, year, arop),
+                by = join_by(subcode, name, year)) |> 
+      filter(type != "arop")
+  })() |> 
+  group_by(year2 = year) |> 
+  nest() |> 
+  arrange(year2) |>
+  mutate(plot_povcompare =
+           map(
+             data,
+             ~ fct_plot_scatter(
+               .x,
+               x_var = "arop",
+               y_var = "value",
+               colour_var = "type",
+               x_title_glue = "Poverty rate (AROP)",
+               y_title_glue = "Other poverty measures",
+               title_glue = "",
+               subtitile_glue = "{year}",
+               legendtitle_glue = "Measure",
+               scale_x_label = label_percent()
+             )
+           ))
+```
+
+```{r figcalc-pov-cross-section}
+plt <-
+  pov_plots_year |> 
+  pull(plot_povcompare) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+ggsave(
+    filename = "output/povmap_pov_cross.png",
+    width = 15, height = 8, dpi = 300,
+    plot = plt)
+```
+
+![Comparing poverty measures in a cross-section](output/povmap_pov_cross.png){#fig-pov-cross-section}
+
+## Across-region restribtuion over time
+
+```{r fig-across-1}
+dta_reg_year <- 
+  dta_geom_dir |> 
+  mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
+  st_drop_geometry() |> 
+  # filter(name == first(name)) |> 
+  arrange(year) |> 
+  mutate(
+    group_id = ifelse(year == 2011, 1, 2) |> str_c(name),
+    year = as_factor(year)) 
+
+plt <- 
+  dta_reg_year |> 
+  select(subcode, name, year, group_id, type, pov, SD, CV) |> 
+  pivot_longer(c(pov, CV, SD), names_to = "var") |> 
+  mutate(
+    var = case_when(
+      var == "pov" ~ "Poverty rate",
+      var == "SD" ~ "Standard Error",
+      var == "CV" ~ "Coef. of variation",
+    ) |>
+      as_factor() |>
+      fct_relevel("Poverty rate")
+  ) |> 
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "value",
+               colour_var = NULL,
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.01),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F,
+               add_point = F,
+             ) + 
+  facet_grid(var ~ type, scales = "free_y") + 
+  scale_x_discrete() +
+  geom_boxplot(fill = NA, aes(group = year)) +
+  geom_line(alpha = 0.1) +
+  geom_point(alpha = 0.1) 
+
+ggsave(
+    filename = "output/povcross_year_line.png",
+    width = 12, height = 7, dpi = 300,
+    plot = plt)
+```
+
+![Comparing poverty measures in a cross-section](output/povcross_year_line.png){#fig-pov-cross-section-2}
+
+```{r fig-across-2}
+plt <- 
+  dta_reg_year |> 
+  select(subcode, name, year, group_id, type, pov, SD, CV) |> 
+  pivot_longer(c(pov, CV, SD), names_to = "var") |> 
+  mutate(
+    var = case_when(
+      var == "pov" ~ "Poverty rate",
+      var == "SD" ~ "Standard Error",
+      var == "CV" ~ "Coef. of variation",
+    ) |>
+      as_factor() |>
+      fct_relevel("Poverty rate")
+  ) |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "value",
+               colour_var = NULL,
+               group_var = "year",
+               x_title_glue = "Year",
+               y_title_glue = "",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.01),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F,
+               add_point = F,
+             ) + 
+  facet_grid(var ~ type, scales = "free_y") + 
+  scale_x_discrete() +
+  geom_boxplot()
+
+ggsave(
+    filename = "output/povcross_year_box.png",
+    width = 12, height = 7, dpi = 300,
+    plot = plt)
+```
+
+![Comparing poverty measures in a cross-section](output/povcross_year_box.png){#fig-pov-cross-section-3}
+
+## Withing-region comparison over time
+
+```{r}
+pov_cv_year_dta <-
+  dta_geom_dir |> 
+  mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
+  st_drop_geometry() |> 
+  arrange(year) |> 
+  mutate(
+    group_id = ifelse(year == 2011, 1, 2) |> str_c(type),
+    year = as_factor(year)) 
+
+pov_cv_year <-
+  pov_cv_year_dta |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "CV",
+               colour_var = "type",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "Coefficient of variance",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_percent(),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+pov_se_year <-
+  pov_cv_year_dta |>
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "SD",
+               colour_var = "type",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "Standrad Error",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.01),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+pov_pov_year <-
+  pov_cv_year_dta |>
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "pov",
+               colour_var = "type",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "Poverty rate",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_number(0.01),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F
+             ) + 
+  facet_wrap(. ~ name) + 
+  scale_x_discrete() +
+  geom_line()
+
+ggsave(filename = "output/pov-pov-years-regions.png", 
+       plot = pov_pov_year, width = 15, height = 12, dpi = 200, scale = 1)
+ggsave(filename = "output/pov-se-years-regions.png", 
+       plot = pov_se_year, width = 15, height = 12, dpi = 200, scale = 1)
+ggsave(filename = "output/pov-cv-years-regions.png", 
+       plot = pov_cv_year, width = 15, height = 12, dpi = 200, scale = 1)
+```
+
+![Poverty rate across years by region](output/pov-pov-years-regions.png){#fig-reg-pov}
+
+![Coefficient of variation across years by region](output/pov-cv-years-regions.png){#fig-reg-cv}
+
+
+![Standard error across years by region](output/pov-se-years-regions.png){#fig-reg-se}
+
+## Spatio-temporal trends in poverty by region
+
+```{r figcalc-tends}
+library(trend)
+library(broom)
+
+pov_trend_dta <- 
+  dta_geom_dir |> 
+  # st_drop_geometry() |> 
+  filter(year != 2011) |> 
+  group_by(subcode, type) |> 
+  nest() |> 
+  # mutate(mkt = map(data, ~{mk.test(.x$pov) |> glance()})) |> 
+  mutate(sen = map(data, ~{
+    # browser()
+    test_stat <- sens.slope(.x$pov) 
+    tibble(sen_slope = test_stat$estimates,
+           sen_pvalue = test_stat$p.value)
+    
+    })) |> 
+  ungroup() |> 
+  unnest(c(sen)) |> 
+  left_join(dta_geom_dir |> 
+              select(subcode, name) |> 
+              group_by(subcode) |> 
+              filter(row_number() == 1) |> 
+              ungroup()) |> 
+  mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
+  st_as_sf()  |>
+  group_by(type2 = type) |>
+  nest() |>
+  mutate(
+    trend_p = map(data, ~ {
+      .x |>
+        fct_map_chreplot(
+          var_fill = "sen_pvalue",
+          subtitle_glue = "P-value: {type}",
+          legend_glue = "P-value",
+          label_form = label_number(0.01),
+          force_breaks = c(0, 0.01, 0.05, 0.1, 1)
+        )
+    }),
+    trend_slope = map(data, ~ {
+      .x |>
+        fct_map_chreplot(
+          var_fill = "sen_slope",
+          subtitle_glue = "Slope: {type}",
+          legend_glue = "Slope",
+          label_form = label_number(0.0001),
+          force_breaks = c(-0.03, -0.015, -.01, -.005, 0, 0.005, 0.01, 0.025, 0.04)
+        )
+    })) 
+
+plt <- 
+  pov_trend_dta$trend_p |> 
+  append(pov_trend_dta$trend_slope) |> 
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+
+ggsave(
+    filename = "output/pov_trends.png",
+    width = 15, height = 13, dpi = 300,
+    plot = plt)
+```
+
+![Trends in poverty rates and their significances](output/pov_trends.png){#fig-pov-trned}
+
+```{r, eval=FALSE, echo=FALSE} 
+pov_plots |> 
+  filter(year2 %in% c(2019, 2023)) |> 
+  pull(plot_poverty) |>
+  reduce( ~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect")
+ 
+  
+  unique() |> 
+  map(~{
+    
+  })
+  
+dta_geom_dir |> 
+  filter(type == "arop") |> 
+  fct_map_chreplot(var_fill = "pov",
+                   fltr_year = 2021,
+                   subtitle_glue = "{year}",
+                   force_breaks = c(0, .1, .15, .2, .25, .3, .35, .4, 0.55),
+                   legend_glue = "Povrety")
+
+dta_geom_dir |> 
+  fct_map_chreplot(var_fill = "SD",
+                   fltr_year = 2011,
+                   subtitle_glue = "{year}",
+                   legend_glue = "SE")
+
+dta_geom_dir |> 
+  fct_map_chreplot(var_fill = "CV",
+                   fltr_year = 2011,
+                   subtitle_glue = "{year}",
+                   legend_glue = "CV")
+
+
+all_plots <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    
+    breaks_local <-  c(0.1, 0.15, 0.2, 0.25, 0.3, 0.35)
+    labels <- str_c(c(0, breaks_local * 100),
+                    "-", 
+                    c(breaks_local, round(max(dta_geom_dir$pov), 2))  * 100)
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) |> 
+      mutate(pov2 = cut(pov, 
+                        include.lowest = T, 
+                        breaks = c(0, breaks_local, 100), labels = labels),
+             pov2 = pov2 |>  fct_relevel(labels))
+
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = pov2),
+        color = "white",
+        size = 0.1,
+        show.legend = TRUE
+      ) + 
+      scale_fill_viridis_d("Poverty rate", direction = -1, drop = F) +
+      labs(subtitle = glue("{.x}")) +
+      theme_minimal() +
+      geom_sf(data = geom_nuts2, fill = NA, colour = "black") +
+      theme(axis.text.x = element_blank(),
+            axis.text.y = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.ticks.y = element_blank())
+
+      set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one <- 
+  all_plots |>
+  reduce( ~ .x + .y)
+
+all_plots_one + patchwork::plot_layout(guides = "collect")
+
+ggsave(
+  filename = glue("output/pov-direct-all.png"),
+  plot = all_plots_one,
+  width = 12,
+  height = 8
+)
+
+
+
+all_plots2 <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) 
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = SD),
+        color = "white",
+        size = 0.1
+      ) +
+      scale_fill_viridis_b("SE") +
+      labs(title = glue("Direct estimates in {.x}")) +
+      theme_bw() + 
+      geom_sf(data = geom_nuts2, fill = NA, colour = "red")
+    set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one_2 <- all_plots2 |> reduce( ~ .x + .y) 
+
+ggsave(
+  filename = glue("output/pov-direct-all-sd.png"),
+  plot = all_plots_one_2,
+  width = 12,
+  height = 8
+)
+
+
+
+all_plots3 <-
+  dta_geom_dir$year |>
+  unique() |>
+  map( ~ {
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) 
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = CV),
+        color = "white",
+        size = 0.1
+      ) +
+      scale_fill_viridis_b("CV", n.breaks = 8) +
+      labs(title = glue("Direct estimates in {.x}")) +
+      theme_bw() + 
+      geom_sf(data = geom_nuts2, fill = NA, colour = "red")
+    set_names(list(map), .x)
+  }) |> 
+  unlist(recursive = F)
+
+all_plots_one_3 <- all_plots3 |> reduce( ~ .x + .y) 
+
+ggsave(
+  filename = glue("output/pov-direct-all-cv.png"),
+  plot = all_plots_one_3,
+  width = 12,
+  height = 8
+)
+
+dta_geom_dir$year |> 
+  unique() |> 
+  walk(~{
+    
+    data <-
+      dta_geom_dir |>
+      filter(year == .x) |>
+      bi_class(x = pov,
+               y = SD,
+               style = "quantile",
+               dim = 3)
+    
+    map <-
+      ggplot() +
+      geom_sf(
+        data = data,
+        mapping = aes(fill = bi_class),
+        color = "white",
+        size = 0.1,
+        show.legend = FALSE
+      ) +
+      bi_scale_fill(pal = "GrPink", dim = 3) +
+      labs(title = glue("Direct estimates in {.x}")) +
+      bi_theme()
+    
+    legend <- bi_legend(
+      pal = "GrPink",
+      dim = 3,
+      xlab = "Higher poverty",
+      ylab = "Higher SD",
+      size = 8
+    )
+    
+    finalPlot <-
+      ggdraw() +
+      draw_plot(map, 0, 0, 1, 1) +
+      draw_plot(legend, 0.15, 0, 0.2, 0.2)
+    
+    
+    ggsave(
+      filename = glue("output/pov-direct-{.x}.png"),
+      plot = finalPlot,
+      width = 8,
+      height = 6
+    )
+  })
+
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  mutate(
+    nuts3_name = str_c(nuts3_name, " (", N, ")"),
+    nuts3_name = as_factor(nuts3_name) |> fct_reorder(N)) |> 
+  ggplot() + 
+  aes(x = nuts3_name, y = CV) + 
+  geom_bar(stat = "identity") + 
+  theme_bw() + 
+  ggplot2::coord_flip()
+  scale_x_discrete() |>
+  theme(text)
+  geom_bar()
+  group_by()
+  
+library(ggrepel)
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  ggplot() + 
+  aes(x = N, y = CV, label = nuts3_name) + 
+  geom_point() + 
+  geom_smooth(se=T) + 
+  ggrepel::geom_label_repel()
+
+
+dta_geom_dir |>
+  filter(year == 2022) |> 
+  ggplot() + 
+  aes(x = N, y = SD, label = nuts3_name) + 
+  geom_point() + 
+  geom_smooth(se=T) + 
+  ggrepel::geom_label_repel(force = T, max.overlaps = 100)
+
+# unique(dta_geom_dir$year) |>
+#   map(~{
+#     out <-
+#       dta_geom_dir |>
+#       filter(year == .x) |>
+#       ggplot() +
+#       aes(fill = pov) +
+#       scale_fill_viridis_b() +
+#       geom_sf() +
+#       theme_bw() +
+#       labs(title = .x)
+# 
+#     # browser()
+# 
+#   }) |>
+#   reduce(~ .x +.y)
+```
