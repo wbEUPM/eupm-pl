@@ -6,7 +6,8 @@
 #' @importFrom rlang expr
 convert_expr <- function(x){
   y <- if (is.character(x)){
-    rlang::expr(~!!sym(x))
+    # rlang::expr(~!!syms(x))
+    reformulate(x)
   } else {
     rlang::expr(~ !!x)
   }
@@ -68,6 +69,7 @@ compute_vcov <- function(dt,
   dom_list <- unique(dt[[domain]])
   
   surv_vcov <- function(x){
+    # browser()
     
     design_obj <- svydesign(ids = ids,
                             probs = probs,

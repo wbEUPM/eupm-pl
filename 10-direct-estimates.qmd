@@ -110,6 +110,7 @@ tribble(
   "v_pov20XX", "Covariance between poverty in current year versus year 20XX (multiple columns)"
 ) |> 
   flextable() |> autofit()
+
 ```
 
 ## Step 1. Loading SILC Data and Renaming Variables
@@ -207,7 +208,6 @@ path_silc_data <- "../Poland/data-eusilc/national"
 all_files <- list.files(path_silc_data, full.names = TRUE) 
 
 # dta_exmpl <- all_files[5] |> read_sav()
-
 dta_hh_loc <- 
   list.files(path_silc_data, full.names = TRUE) |> 
   map(~{
@@ -231,12 +231,60 @@ dta_hh_loc <-
   ) |> 
   left_join(powiat_podregion_codes, by = join_by(powiat_id))
 
+# household id -------------------------------------------------------
+hidmap_h <- 
+  list.files("../Poland/data-eusilc/HIDMAP/", full.names = TRUE, pattern = "_h") |>
+  lapply(function(f) {
+    f |>
+      read.csv() |>
+      transmute(
+        year = as.integer(DB010), # Year
+        hh_id = as.integer(R_DB030), # Household identifier
+        hh_id2 = as.integer(DB030)
+      )
+  }) |> 
+  bind_rows() |> 
+  as_tibble()
+
 
 dta1 <- 
   dta_hh |> 
-  left_join(dta_hh_loc, by = join_by(year, hh_id))
+  left_join(dta_hh_loc, by = join_by(year, hh_id)) |>
+  left_join(hidmap_h, by = c("year", "hh_id")) |>
+  mutate(hh_id = ifelse(is.na(hh_id2), hh_id, hh_id2)) |>
+  select(-hh_id2)
+
+
+dta1 |>
+  filter(year != 2011) |> 
+  count(hh_id) |> count(n) |> 
+  summarise(sum(nn))
 
 dta1 |> group_by(year) |> summarise(across(contains("weight"), ~sum(.)))
+# dta1 |> count(year, is.na(hh_id2))
+
+# dta1 <-
+#   dta1 |>
+#   mutate(hh_id = ifelse(is.na(hh_id2), hh_id, hh_id2)) |>
+#   select(-hh_id2)
+
+dta1 |>
+  arrange(hh_id) |> 
+  filter(year != 2011) |>
+  count(hh_id, name = "nobs") |>
+  count(nobs, name = "nhh")
+
+dta1 |> 
+  filter(year != 2011) |>
+  mutate(year_rotation = paste(year, rotation, sep = "_")) |>
+  mutate(n = 1) |>
+  select(hh_id, year_rotation, n) |>
+  arrange(year_rotation) |>
+  pivot_wider(names_from = year_rotation, values_from = n) |>
+  count(pick(starts_with("2")), name = "nhh") |>
+  rowwise() |>
+  mutate(nobs = sum(pick(starts_with("2")), na.rm = TRUE)) |> 
+  print(n=100)
 
 # dta1 <- 
 #   dta0 |> 
@@ -278,7 +326,7 @@ Note that this exemplary survey data is:
 glimpse(dta1)
 ```
 
-## Step 2. Extracting household level characteristics
+## Step 2.1 Extracting household level characteristics
 
 Since our data is at the individual level, all household level characteristics are constant for each individual. 
 Besides, income and other characteristics are already pre-computed in our case.
@@ -508,60 +556,90 @@ Covariances between years on a balanced panel across all years.
 Covariances on a balanced panel from pairs of years.
 Covariances on a panel created based on other aggregation variables such as PSU or similar.
 
-#### Balanced Panel Covariances
+#### Balanced Panel and Pairvise covariance
 
 For balanced panel covariances, we first need to construct a panel dataset and then compute the covariances.
 To do this, we pivot the data for household-specific poverty statuses into a wide format and then compute variance-covariance matrices, dropping any rows with missing observations.
 
-```{r dta-vcov-balanced}
-# dta4_wide <-
-#   dta3 |>
-#   select(all_of(c(area_var, hhid_var, cluster_var, strata_var, 
-#                   weight_var, year_var, poverty_var))) |> 
-#   pivot_wider(
-#     id_cols = all_of(c(area_var, hhid_var, cluster_var, strata_var, weight_var)),
-#     names_from = year_var,
-#     values_from = all_of(poverty_var),
-#     names_glue = "{.value}{year}",
-#     values_fn = first
-#   )  
-#   # filter(id %in% c(101:102)) |>
-#   # mutate(across(
-#   #   contains("poor"),
-#   #   ~ ifelse(row_number() %in% sample(seq(1, length(
-#   #     .data[[area_var]]
-#   #   )), 100), NA_real_, .)
-#   # ))
-# 
-# 
-# dta4_vcov_1 <- 
-#   compute_vcov(dt = dta4_wide,
-#                domain = area_var,
-#                ids = cluster_var, 
-#                strata = strata_var,
-#                weights = weight_var,
-#                yvars = paste0("poor", unique(dta3[[year_var]])),
-#                na.rm = TRUE) 
+```{r dta-vcov}
+# poverty_var_local <- poverty_var[[1]]
+all_covs <- 
+  poverty_var |>
+  map(~ {
+    poverty_var_local <- .x
+    
+    dta4_wide <-
+      dta3 |>
+      select(all_of(
+        c(
+          area_var,
+          hhid_var,
+          cluster_var,
+          strata_var,
+          weight_var ,
+          year_var,
+          poverty_var_local
+        )
+      )) |>
+      mutate(strata = ifelse(nchar(strata) == 4, str_c("0", strata), strata)) |>
+      group_by(hh_id) |>
+      mutate(hh_weight = mean(hh_weight), hh_id  = as.character(hh_id)) |>
+      filter(year != 2011) |>
+      pivot_wider(
+        id_cols = all_of(c(
+          area_var, hhid_var, cluster_var, strata_var, weight_var
+        )),
+        names_from = year_var,
+        values_from = all_of(poverty_var_local),
+        names_glue = "{.value}{year}",
+        values_fn = first
+      ) |>
+      ungroup()
+    
+    pov_vars_list <- dta4_wide |> select(contains(poverty_var_local)) |> names()
+    
+    dta4_vcov_1 <-
+      compute_vcov(
+        dt = dta4_wide,
+        domain = area_var,
+        ids = cluster_var,
+        strata = strata_var,
+        weights = weight_var,
+        yvars = pov_vars_list,
+        na.rm = TRUE
+      )
+    
+    dta4_vcov_2 <-
+      compute_vcov_pairs(
+        dt = dta4_wide,
+        domain = area_var,
+        ids = cluster_var,
+        strata = strata_var,
+        weights = weight_var,
+        yvars = pov_vars_list,
+        na.rm = TRUE
+      ) |>
+      ungroup()
+    
+    dta4_vcov_1 |> 
+      mutate(vcov_type = "balanced") |>
+      bind_rows(dta4_vcov_2 |> mutate(vcov_type = "paired")) |>
+      pivot_longer(c(matches("^v_"), contains("n_"))) |>
+      filter(!is.na(value)) |>
+      filter(value > 0) |>
+      separate(name, into = c("from", "to"), sep = "__") |>
+      separate(from, into = c("variable", "from"), sep = "_") |>
+      mutate(variable = ifelse(variable == "v", "covariance", "N"))
+  }) |> 
+  bind_rows()
+
+
 ```
-
-### Pairvise covariances
-
-```{r dta-vcov-paired}
-# dta4_vcov_2 <- 
-#   compute_vcov_pairs(dt = dta4_wide,
-#                domain = area_var,
-#                ids = cluster_var, 
-#                strata = strata_var,
-#                weights = weight_var,
-#                yvars = paste0("poor", unique(dta3[[year_var]])),
-#                na.rm = TRUE) 
-```
-
 
 Here is what the results look like:
 
 ```{r, echo = TRUE}
-# glimpse(dta4_vcov_1)
+glimpse(all_covs)
 # glimpse(dta4_vcov_2)
 ```
 
@@ -601,7 +679,7 @@ Now, you can replace the zero/near zero sample size area MSEs with their smoothe
 
 ```{r saving}
 bd_clean |> pin_write(dta4_direct, name = "pov_direct", type = "rds")
-# bd_clean |> pin_write(dta4_vcov_1, name = "pov_vcov_balanced", type = "rds")
+bd_clean |> pin_write(all_covs, name = "pov_vcov", type = "rds")
 # bd_clean |> pin_write(dta4_vcov_2, name = "pov_vcov_paired", type = "rds")
 ```
 
@@ -616,19 +694,24 @@ library(scales)
 library(patchwork)
 library(biscale)
 
-geoms <-  bd_clean |> pin_read("geometries")
+geoms <- "../Poland/outputs/shp_dt.rds" |> readRDS()
+
 pov_direct <- bd_clean |> pin_read("pov_direct")
 
-
-geom_nuts3 <- geoms$level4 |> rename(subcode = id)
-geom_nuts2 <- geoms$level2
+geom_nuts2 <- 
+  geoms |> 
+  mutate(province = str_sub(subcode, 1, 5)) |> 
+  group_by(province) |> 
+  summarise() |> 
+  ungroup() |> 
+  st_make_valid()
 
 dta_geom_dir <-
-  geom_nuts3 |>
-  left_join(pov_direct, by = join_by(subcode)) |>
-  as_tibble() |>
-  st_as_sf() |>
-  filter(type == "arop")
+  geoms |> 
+  left_join(pov_direct, by = join_by(subcode)) |> 
+  as_tibble() |> 
+  st_as_sf() |> 
+    filter(type == "arop")
 
 all_plots <-
   dta_geom_dir$year |>
@@ -636,6 +719,9 @@ all_plots <-
   map( ~ {
     data <-
       dta_geom_dir |>
+      # mutate(pov2 = cut(pov, breaks = c(0, 10, 15, 20, 30, ceiling(max(dta_geom_dir$pov)))/ 100) |> 
+      #          fct_rev()) |> 
+      
       filter(year == .x) 
     map <-
       ggplot() +
