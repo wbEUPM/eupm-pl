@@ -53,7 +53,7 @@ list.files("R", pattern = "*.R$", full.names = TRUE, ignore.case = TRUE) |>
 # Raw data root
 root_raw <- "./data/raw"
 root_temp <- "./data/temp"
-root_clean <- "./data/clean-example"
+root_clean <- "./data/clean"
 
 # Data-storage boards
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
@@ -108,9 +108,95 @@ The MFH estimation process relies on 3 types of data:
 
 ```{r dta-load}
 #| echo: true
-survey_dt <- bd_clean |> pin_read("pov_direct")
-rhs_dt <- bd_clean |> pin_read("sae_data")
+direct_dt <- bd_clean |> pin_read("pov_direct")
+
+colnames(direct_dt)[colnames(direct_dt) == "subcode"] <- "ID"
+
+#' Quick function to clean the right hand side variables dataset
+#' 
+#' @param rhs_dt `data.frame` object for the right hand side variables
+#' 
+#' @export
+#' 
+
+clean_rhs <- function(rhs_dt){
+  
+    ### let us reconstruct the column names 
+  # first select the relevant columns
+  relcols <- colnames(rhs_dt)[grepl(pattern = "^X\\d+|^\\.\\.\\.\\d+", 
+                                    x = colnames(rhs_dt))]
+  
+  current_label <- NA
+  
+  new_labels <- character(length(relcols))
+  
+  for (i in seq_along(relcols)){
+      
+      if (grepl("^X\\d+$", relcols[i])) {
+      current_label <- relcols[i]      # update current X-label
+      new_labels[i] <- current_label
+      } else if (grepl("^\\.\\.\\.\\d+$", relcols[i])) {
+      new_labels[i] <- current_label  # assign to last seen X-label
+      } else {
+      new_labels[i] <- cols[i]  # for ID columns etc.
+      }
+    
+    }
+  
+  relcols <- new_labels
+  
+  rowtwo_list <- 
+    rhs_dt[1,] |> 
+    as.list() |> 
+    unlist() |> 
+    unname() |>
+    str_replace_na(replacement = "")
+  
+  new_labels <- c(colnames(rhs_dt)[!grepl(pattern = "^X\\d+|^\\.\\.\\.\\d+", 
+                                    x = colnames(rhs_dt))],
+                  new_labels)
+  
+  colnames(rhs_dt) <- 
+    tibble(rowtwo_list,
+           new_labels) |>
+    mutate(y = ifelse(grepl(pattern = "^X\\d+", x = new_labels), "y", ""),
+           varnames = paste0(new_labels, y, rowtwo_list)) |>
+    dplyr::select(varnames) |>
+    unlist() |>
+    unname()
+  
+  rhs_dt <- rhs_dt[-1,]
+  
+  return(rhs_dt)
+  
+} 
+
+widerhs_dt <- 
+  paste0(root_raw, "/data-other", "/auxiliary-variables.xlsx") |>
+  readxl::read_excel()
+
+
+widerhs_dt <- clean_rhs(rhs_dt = widerhs_dt)
+
+
+  
 shp_dt <- bd_clean |> pin_read("geometries")
+
+
+#### a little bit of housekeeping
+area_vars <- c("ID", "No.", "Subregion") ### both variables are at the same level. if the levels vary, you would need to combine both variables for effect use
+
+# cluster_var <- "ea_id"
+# weight_var <- "weight"
+year_var <- "year"
+directpov <- "pov"
+# povline_var <- "povline"
+directvar <- "vardir"
+
+year_set <- unique(direct_dt$year)[2:4]
+
+
+
 ```
 
 Below is what our datasets look like. These are generally the variables
@@ -125,7 +211,7 @@ survey_dt |> glimpse()
 rhs_dt |> glimpse()
 ```
 
-\``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
+`rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
 
 ```{r}
 shp_dt |> glimpse()
@@ -136,6 +222,10 @@ shp_dt |> glimpse()
 A quick summary table on the data needs for the MFH model:
 
 ```{r}
+
+
+
+
 # Create the table content
 mfh_table <- tibble::tibble(
   Dataset = c("`survey_dt`", "`rhs_dt`", "`shp_dt`"),
@@ -189,32 +279,33 @@ Thus far, we have careful set up the types of data we require for the MFH model.
 ```{r}
 #| echo: true
 
-## reshaping the rhs_dt from long to wide
-widerhs_dt <- 
-  rhs_dt |>
-  pivot_wider(
-    id_cols = dplyr::all_of(area_vars),
-    names_from = dplyr::all_of(year_var),
-    values_from = dplyr::all_of(candidate_vars),
-    names_glue = "{.value}{year}",
-    values_fn = \(x) dplyr::first(x)  # or `first`, or something more explicit if needed
-  )
+# ## reshaping the rhs_dt from long to wide
+# widerhs_dt <- 
+#   rhs_dt |>
+#   pivot_wider(
+#     id_cols = dplyr::all_of(area_vars),
+#     names_from = dplyr::all_of(year_var),
+#     values_from = dplyr::all_of(candidate_vars),
+#     names_glue = "{.value}{year}",
+#     values_fn = \(x) dplyr::first(x)  # or `first`, or something more explicit if needed
+#   )
+
+
+
 
 ## now let us reshape and merge in the poverty rates
 
 mfh_dt <- 
   direct_dt |>
   pivot_wider(
-    id_cols = dplyr::all_of(area_vars),
-    names_from = dplyr::all_of(year_var),
-    values_from = "direct_povrate",
+    id_cols = area_vars[[1]],
+    names_from = all_of(year_var),
+    values_from = all_of(c(directpov, directvar)),
     names_glue = "{.value}{year}",
-    values_fn = \(x) dplyr::first(x)  # or `first`, or something more explicit if neede
+    values_fn = ~ dplyr::first(na.omit(.x))  # or `first`, or something more explicit if neede
   ) |>
   merge(y = widerhs_dt,
-        by = area_vars[[1]]) |>
-  merge(y = var_dt,
-        by = area_vars[[1]])
+        by = area_vars[[1]]) 
 
 
 ```
@@ -226,46 +317,90 @@ Here is what the data looks like:
 mfh_dt |> glimpse()
 ```
 
+### Variable Preparation
+
+```{r var-preparation}
+
+# Identify the columns of interest
+x_vars <- names(mfh_dt) %>% str_subset("^X\\d+y\\d+")
+
+numeric_x_vars <- x_vars[sapply(mfh_dt[x_vars], is.numeric)]
+
+# Function to min-max scale
+min_max_scale <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+
+# Mutate log and scaled versions
+mfh_dt <- 
+mfh_dt %>%
+  mutate(
+    # Add log-transformed columns
+    across(all_of(numeric_x_vars), 
+           .fns = ~ log1p(.), 
+           .names = "log{.col}"),
+    
+    # Add min-max scaled columns
+    across(all_of(numeric_x_vars), 
+           .fns = ~ min_max_scale(.), 
+           .names = "scaled{.col}")
+  )
+
+
+
+
+```
+
+
+
 ### Variable Selection Process
 
 Next, we apply a simple variable selection process which employs the stepwise regression algorithm using the AIC selection criteria as in described by [@yamashita2007stepwise]. The function `step_wrapper()` implemented below is a wrapper to the `stepAIC()` function carries all the perfunctory cleaning necessary use the `stepAIC()` function. This includes dropping columns that are entirely missing (`NA`) and keep only complete cases/observations and remove perfectly or near collinear variables and combinations using the variance inflation method.
 
 ```{r var-selection}
 #| echo: true
-candidate_vars <- 
-  expand.grid(var = candidate_vars,
-              year = unique(survey_dt[[year_var]])) |>
-  transform(name = paste0(var, year)) |>
-  dplyr::select(name) |>
-  unlist() |>
-  unname()
-  
-  
-## extract the year identifiers in each variance covariance name
-varyear_list <- stringr::str_extract_all(varcols, "\\d{4}")
+# candidate_vars <- 
+#   expand.grid(var = candidate_vars,
+#               year = unique(survey_dt[[year_var]])) |>
+#   transform(name = paste0(var, year)) |>
+#   dplyr::select(name) |>
+#   unlist() |>
+#   unname()
 
-## Keep only those where both years are the same i.e. the variances
-variance_cols <- varcols[lengths(varyear_list) == 2 & 
-                           sapply(varyear_list, function(x) x[1] == x[2])]
+candidate_vars <- c(numeric_x_vars,
+                    paste0("log", numeric_x_vars),
+                    paste0("scaled", numeric_x_vars))
 
-## replace the variances-covariances that are zero or near zero with their smoothed counterparts
-mfh_dt <- 
-  mfh_dt |>
-  mutate(across(
-    starts_with("v_"),
-    ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
-    .names = "{.col}"
-  ))
+bad_vars <- candidate_vars[sapply(mfh_dt[candidate_vars], function(col) any(!is.finite(col)))]
+
+candidate_vars <- candidate_vars[!candidate_vars %in% bad_vars]
+  
+# ## extract the year identifiers in each variance covariance name
+# varyear_list <- stringr::str_extract_all(varcols, "\\d{4}")
+# 
+# ## Keep only those where both years are the same i.e. the variances
+# variance_cols <- varcols[lengths(varyear_list) == 2 & 
+#                            sapply(varyear_list, function(x) x[1] == x[2])]
+
+# ## replace the variances-covariances that are zero or near zero with their smoothed counterparts
+# mfh_dt <- 
+#   mfh_dt |>
+#   mutate(across(
+#     starts_with("v_"),
+#     ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
+#     .names = "{.col}"
+#   ))
 
 fh_step <-
-  lapply(X = paste0("direct_povrate", unique(survey_dt[[year_var]])),
+  lapply(X = paste0(directpov, unique(direct_dt[[year_var]])),
          FUN = function(x){
 
            model_obj <-
            step_wrapper(dt = mfh_dt,
                         xvars = candidate_vars,
                         y = x,
-                        cor_thresh = 0.7,
+                        cor_thresh = 0.9,
                         k = log(nrow(mfh_dt))) ### using log(n) to force BIC selection
 
            xx <- names(model_obj$coefficients)[!grepl("(Intercept)",
@@ -302,12 +437,19 @@ mfh_formula <-
     return(y)
 
   },
-  x = paste0("direct_povrate", unique(survey_dt[[year_var]])),
-  rhs = fh_step |> map(~.x[1:3]),
+  x = paste0(directpov, unique(direct_dt[[year_var]])),
+  rhs = fh_step,
   SIMPLIFY = FALSE)
 
 ### here is what the 3 equations look like
-mfh_formula
+lapply(mfh_formula,
+       FUN = function(x){
+         
+         y <- lm(x, data = mfh_dt)
+         
+         summary(y)
+         
+       })
 
 ```
 
@@ -318,23 +460,64 @@ Next, we show how to use the `msae` R package to estimate the Empirical Best Lin
 ```{r mvfh-est}
 #| echo: true
 #| eval: false
-mfh_dt1 <- mfh_dt |> mutate(across(contains("v_pov_"), ~ 0.1)) |> as_tibble()
+# mfh_dt1 <- mfh_dt |> mutate(across(contains("v_pov_"), ~ 0.1)) |> as_tibble()
+
+### create the appropriate set of variance covariance variables depending on what years of data are selected
+
+prepare_vcov <- function(){
+  
+  vc <- paste0(directvar, year_set)
+  
+  # Generate all unique pairs (upper triangle only, including diagonal)
+  all_pairs <- t(combn(vc, 2))
+  colnames(all_pairs) <- c("var1", "var2")
+  
+  # Convert to data.frame (this contains only the covariances)
+  covariances <- as.data.frame(all_pairs, 
+                               stringsAsFactors = FALSE)  
+  
+  covariances <- 
+    covariances |>
+    mutate(fn = paste0(var1, var2))
+  
+  return(covariances$fn)
+  
+}
+
+mfh_dt[, prepare_vcov()] <- 0
+
+varcols <- c(paste0(directvar, year_set),
+             prepare_vcov())
+
+
+
+yvars <- paste0(directpov, year_set)
+
 
 # univariate FH
-model0_obj <- eblupUFH(mfh_formula, vardir = varcols, data = mfh_dt)
+model0_obj <- eblupUFH(mfh_formula[yvars], vardir = varcols, data = mfh_dt)
 bd_out |> pin_write(model0_obj, type = "rds")
 
 # multivariate FH 1
 tic(msg = "eblupMFH1")
-model1_obj <- eblupMFH1(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 10000, PRECISION = 0.01)
+model1_obj <- eblupMFH1(mfh_formula[yvars], 
+                        vardir = varcols, 
+                        data = mfh_dt, 
+                        MAXITER = 10000, 
+                        PRECISION = 0.01)
 bd_out |> pin_write(model1_obj, type = "rds")
 toc()
 
 # multivariate FH 2
 tic(msg = "eblupMFH2")
-model2_obj <- eblupMFH2(mfh_formula, vardir = varcols, data = mfh_dt, MAXITER = 1e10, PRECISION = 0.01)
+model2_obj <- eblupMFH2(mfh_formula[yvars], 
+                        vardir = varcols, 
+                        data = mfh_dt, 
+                        MAXITER = 1e10, 
+                        PRECISION = 0.01)
 bd_out |> pin_write(model2_obj, type = "rds")
 toc()
+
 ```
 
 ```{r mvfh-load}
