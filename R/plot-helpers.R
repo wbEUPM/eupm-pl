@@ -158,7 +158,7 @@ fct_plot_scatter <- function(dta,
     theme_bw()
   
   if (add_point) plt <- plt + geom_point()
-  if (add_smooth) plt <- plt + geom_smooth(method = 'loess', formula = 'y ~ x')
+  if (add_smooth) plt <- plt + geom_smooth(method = 'loess', formula = 'y ~ x', se = FALSE)
   if (add_line) plt <- plt + geom_abline(slope = 1, intercept = 0, linetype = 3)
   
   plt

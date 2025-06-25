@@ -1,7 +1,11 @@
 ---
 title: "The Multivariate Fay Herriot"
 author: "Ifeanyi Edochie"
-format: html
+format: 
+  html:
+    fig-width: 14
+    fig-height: 9
+    fig-retina: true
 editor: source
 bibliography: references.bib
 ---
@@ -263,7 +267,7 @@ Geo-spatial boundaries of each target area are loaded. We use NUTS2 and NUTS3 bo
 ```{r dta-load-gis}
 #| echo: false
 geoms <-  bd_clean |> pin_read("geometries")
-geom_nuts3 <- geoms$level4 |> rename(subcode = id)
+geom_nuts3 <- geoms$level4
 geom_nuts2 <- geoms$level2
 ```
 
@@ -845,19 +849,19 @@ est_mfh_pair <- function(one_comb) {
   
   # MFH 2
   cat("MFH2\n")
-  # model2_obj <- try({eblupMFH2_v2(
-  #   mfh_formula_local,
-  #   vardir = var_cols_local,
-  #   data = dta_mhf,
-  #   MAXITER = 1000,
-  #   PRECISION = 0.001
-  # )}, silent = T)
+  model2_obj <- try({eblupMFH2_v2(
+    mfh_formula_local,
+    vardir = var_cols_local,
+    data = dta_mhf |> mutate(cov2022_2023 = cov2022_2023 / 3),
+    MAXITER = 1000,
+    PRECISION = 0.001
+  )}, silent = T)
   
   tibble(
     year_min = min(one_comb),
     year_max = max(one_comb),
-    model = c("UFH", "MFH1"), # "MFH2"),
-    eblups = list(model0_obj, model1_obj) #, model2_obj)
+    model = c("UFH", "MFH1", "MFH2"),
+    eblups = list(model0_obj, model1_obj, model2_obj)
   )
 }
 
@@ -883,9 +887,7 @@ eblup_pairs_2y <-
            })) |> 
   mutate(estimate = str_c(model, " (", year_min, "-", year_max, ")"))
 
-
 bd_out |> pin_write(eblup_pairs_2y, type = "rds")
-
 ```
 
 
@@ -896,67 +898,70 @@ Saving results of the models
 mod_dta <-
   bd_out |> pin_read("eblup_const_cov") |> 
   bind_rows(bd_out |> pin_read("eblup_zero_cov")) |> 
-  bind_rows(bd_out |> pin_read("eblup_pairs_2y")) |>
-  mutate(model = ifelse(!is.na(estimate), estimate, model)) |>
-  rename(est2 = estimate) |>
-  unnest(results) |> 
-  bind_rows(pov_direct |> mutate(model = "Direct")) |> 
-  mutate(estimate = model) |> 
-  filter(str_detect(estimate, "Direct|MFH|UFH.{1,2}0")) |> 
+  bind_rows(bd_out |> pin_read("eblup_pairs_2y") |> rename(est2 = estimate)) |>
+  unnest(results) |>
+  mutate(
+    estimate = ifelse(is.na(est2), model, est2)
+  ) |> 
+  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
+  # select(-eblups, -est2, -model) |> 
+  filter(str_detect(estimate, "Direct|MFH|UFH.{1,2}0"),
+         year > 2012) |> 
   mutate(estimate = as_factor(estimate))
-  
-# mod_dta |> count(estimate)
-# bd_clean |> pin_write(pov_mfh, name = "pov_mfh", type = "rds")
 ```
 
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
 
 We now verify the assumptions of the MFH3 model. This includes assessing linearity, the normality of the predicted area effects and standardized residuals, as well as checking for the presence of outlying areas.
 
-### SE vs Poverty
+### SE vs Poverty by model
 
 ```{r}
-mod_dta |> filter(year %in% 2022) |>
+#| fig-width: 14
+#| fig-height: 8
+#| fig-retina: true
+mod_dta |> 
   ggplot() + 
   aes(y = SD, x = pov, colour = estimate) + 
-  geom_point(size = 3, aes(shape = estimate)) +
+  geom_point(size = 1) +
   # geom_smooth(se = FALSE) +
   facet_wrap(. ~ year, scales = "free") +
-  # scale_shape_manual(values= c(21, 24, 23, 22, 3, 4, 5, 7, 8, 10)[1:nlevels(mod_dta$estimate)]) + 
   scale_y_continuous("SE") + 
   coord_cartesian(ylim=c(0, 0.075)) +
   coord_cartesian(xlim=c(0, 0.4)) +
   ylim(c(0, 0.075)) +
-  # xlim(c(0, 0.4)) +
+  xlim(c(0, 0.4)) +
   theme_bw()
 ```
 
 ### CV vs Poverty
 
 ```{r}
-mod_dta |> #filter(year %in% 2023) |>
+#| fig-width: 14
+#| fig-height: 8
+#| fig-retina: true
+mod_dta |> 
   ggplot() + 
   aes(y = CV, x = pov, colour = estimate) + 
   geom_point(size = 1) +
   geom_smooth(se = FALSE) +
   facet_wrap(. ~ year, scales = "free") +
-  # scale_shape_manual(values= c(21, 24, 23, 22, 3, 4, 5, 7, 8, 10)[1:nlevels(mod_dta$estimate)]) + 
   scale_y_continuous("CV") + 
-  coord_cartesian(ylim=c(0, 0.075)) +
-  coord_cartesian(xlim=c(0, 0.4)) +
-  ylim(c(0, 0.75)) +
-  # xlim(c(0, 0.4)) +
+  # coord_cartesian(ylim=c(0, 0.075)) +
+  # coord_cartesian(xlim=c(0, 0.4)) +
+  ylim(c(0, 0.5)) +
+  xlim(c(0, 0.4)) +
   theme_bw()
 ```
 
-### Direct vs MFH
+### Direct vs FH/MFH
 
 #### Poverty rate
 
 ```{r}
 library(glue)
 pov_mfh_dir <- 
-  pov_mfh |> 
+  mod_dta |> 
   left_join(pov_direct |>
               select(
                 id,
@@ -967,7 +972,7 @@ pov_mfh_dir <-
               ),
             by = join_by(id, year)
             ) |> 
-  left_join(shp_dt) |> 
+  left_join(geom_nuts3, by = join_by(id)) |> 
   st_as_sf()
 
 pov_mfh_dir |>
@@ -977,12 +982,15 @@ pov_mfh_dir |>
     colour_var = "estimate",
     x_title_glue = "Poverty rate in direct estimates",
     y_title_glue = "MFH poverty rate",
-    title_glue = "",
+    title_glue = "{type}",
     subtitile_glue = "",
     legendtitle_glue = "Estimate",
     scale_x_label = label_percent()
   ) +
-  facet_wrap(. ~ year, scales = "free")
+  # ylim(c(0, 0.45)) +
+  coord_cartesian(ylim=c(0, 0.4),  xlim=c(0, 0.4)) +
+  facet_wrap(. ~ year, scales = "free") +
+  scale_color_hue() 
 ```
 
 #### CV
@@ -1000,7 +1008,9 @@ pov_mfh_dir |>
     legendtitle_glue = "Estimate",
     scale_x_label = label_percent()
   ) +
-  facet_wrap(. ~ year, scales = "free")
+  coord_cartesian(ylim=c(0, 0.3),  xlim=c(0.1, 0.4)) +
+  facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
 ```
 
 #### SE
@@ -1018,14 +1028,15 @@ pov_mfh_dir |>
     legendtitle_glue = "Estimate",
     scale_x_label = label_percent()
   ) +
-  facet_wrap(. ~ year, scales = "free")
+  coord_cartesian(ylim=c(0, 0.1),  xlim=c(0, 0.12)) +
+  facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
 ```
 
 ### Linearity Test
 
 To assess whether a linear regression model may be incorrectly specified — for instance, due to omitted variables or incorrect functional form — we can use Ramsey’s Regression Equation Specification Error Test (RESET). This test examines whether adding nonlinear combinations (typically powers) of the model’s fitted values significantly improves the model. However, the outcome of interest now is the model MSEs. A significant test result (low p-value) suggests the model is mis-specified and may benefit from additional or transformed predictors.
 
-We implement Ramsey’s RESET test in R using the resettest() function from the lmtest package:
 
 ```{r lin-test}
 #| echo: false
@@ -1044,39 +1055,47 @@ pov_mfh_dir |>
     legendtitle_glue = "Estimate",
     scale_x_label = label_number(0.0001)
   ) +
-  facet_wrap(. ~ year, scales = "free")
+  coord_cartesian(ylim=c(-0.1, 0.1),  xlim=c(0.05, 0.3)) +
+  facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
+
+```
+
+We implement Ramsey’s RESET test in R using the resettest() function from the lmtest package:
+
+```{r eval=FALSE}
   
-eblup_dt <- model2_obj$eblup
-mse_dt <- model2_obj$MSE
-
-colnames(eblup_dt) <- paste0("eblup_", colnames(eblup_dt))
-colnames(mse_dt) <- paste0("mse_", colnames(mse_dt))
-
-reset_dt <- bind_cols(eblup_dt, mse_dt) |> as_tibble()
-
-### lets perform the reset test on the pairs of variables as appropriate i.e. poverty = B0 + B1*MSE
-
-test_list <-
-  lapply(year_set, function(x) {
-
-    # Subset only the columns for year x
-    dt <- reset_dt |>
-      dplyr::select(matches(paste0(x, "$")))  # Select columns ending with current year
-
-    yvar <- colnames(dt)[grepl("^eblup_", colnames(dt))]
-    xvar <- colnames(dt)[grepl("^mse_", colnames(dt))]
-
-    # Create formula with squared and cubed terms using I()
-    form <- as.formula(paste0(
-      xvar, " ~ ",
-      yvar, " + I(", yvar, "^2)"
-    ))
-
-    model_obj <- lm(form, data = dt)
-
-    return(model_obj)
-
-  })
+# eblup_dt <- model2_obj$eblup
+# mse_dt <- model2_obj$MSE
+# 
+# colnames(eblup_dt) <- paste0("eblup_", colnames(eblup_dt))
+# colnames(mse_dt) <- paste0("mse_", colnames(mse_dt))
+# 
+# reset_dt <- bind_cols(eblup_dt, mse_dt) |> as_tibble()
+# 
+# ### lets perform the reset test on the pairs of variables as appropriate i.e. poverty = B0 + B1*MSE
+# 
+# test_list <-
+#   lapply(year_set, function(x) {
+# 
+#     # Subset only the columns for year x
+#     dt <- reset_dt |>
+#       dplyr::select(matches(paste0(x, "$")))  # Select columns ending with current year
+# 
+#     yvar <- colnames(dt)[grepl("^eblup_", colnames(dt))]
+#     xvar <- colnames(dt)[grepl("^mse_", colnames(dt))]
+# 
+#     # Create formula with squared and cubed terms using I()
+#     form <- as.formula(paste0(
+#       xvar, " ~ ",
+#       yvar, " + I(", yvar, "^2)"
+#     ))
+# 
+#     model_obj <- lm(form, data = dt)
+# 
+#     return(model_obj)
+# 
+#   })
 # 
 # reset_dt2 <- 
 #   reset_dt |> 
@@ -1103,7 +1122,9 @@ Here is what the results look like:
 
 ```{r}
 #| echo: false
-test_list %>% lapply(X = ., FUN = summary)
+
+
+# test_list %>% lapply(X = ., FUN = summary)
 ```
 
 The results particularly for the final 2 years indicate that we might need to retransform the variables in the model as there are potentially non linear relationships which our model is not capturing. Perhaps creating higher order polynomials and other variable transformations of our right hand side variables reduce the error rates within the model.
@@ -1119,65 +1140,84 @@ First, we perform the shapiro wilks normality test on the model errors, $\vareps
 ```{r sw-test}
 #| echo: false
 
-
-### first lets replace the negative values with 0
-eblup_dt[eblup_dt < 0] <- 0
-
-### evaluating the normality assumption
-
-#### first lets create a residual table by looking at the difference between actual and predicted poverty rates
-resid_dt <- mfh_dt[,paste0("pov", year_set)] - eblup_dt
-
-### perform the shapiro test
-
-shapiro_obj <- apply(resid_dt, 2, shapiro.test)
-
-summary_dt <- 
-  data.frame(Time = names(shapiro_obj),
-             W = lapply(X = shapiro_obj,
-                        FUN = function(x){
-                          
-                          return(x$statistic[[1]])
-                          
-                        }) %>%
-               as.numeric(),
-             p_value = lapply(X = shapiro_obj,
-                              FUN = function(x){
-                                
-                                return(x$p.value)
-                                
-                              }) %>%
-               as.numeric())
-
-### plot the results
-summary_dt <- 
-  summary_dt %>%
-  mutate(label = paste0("W = ", round(W, 3), "\n", "p = ", signif(p_value, 3)))
-
-resid_dt %>%
-  pivot_longer(cols = everything(), 
-               names_to = "Time", 
-               values_to = "Residual") %>%
-  ggplot(aes(x = Residual)) + 
-  geom_histogram(bins = 10, fill = "steelblue", color = "white") + 
-  geom_text(data = summary_dt, aes(x = -Inf, y = Inf, label = label),
-            hjust = -0.1, vjust = 1.2, inherit.aes = FALSE, size = 3.5) +
-  facet_wrap(~Time, scales = "free") + 
-  theme_minimal() + 
-  labs(title = "Residual Histograms by Time Period")
-
-
-### here's how to create qqplots
-resid_dt %>%
-  pivot_longer(cols = everything(),
-               names_to = "Time",
-               values_to = "Residual") %>%
-  ggplot(aes(sample = Residual)) +
-  stat_qq() +
-  stat_qq_line() +
-  facet_wrap(~Time, scales = "free") +
-  theme_minimal() +
-  labs(title = "QQ Plots of Residuals by Time Period")
+pov_mfh_dir |> 
+  mutate(error = pov_direct - pov) |>
+  group_by(year, estimate) |> #glimpse()
+  filter(estimate != "Direct") |> 
+  nest() |> 
+  mutate(shap_test = map(data, ~{
+    out <- try(.x$error |> shapiro.test() |> glance(), silent = T)
+    if ("try-error" %in% class(out)) {
+      browser()
+      out <- tibble()
+    }
+    out
+  })) |> 
+  unnest(shap_test) |> 
+  mutate(stats = str_c(number(statistic,0.001), stars.pval(p.value))) |> 
+  select(-data, -statistic, -p.value, -method) |> 
+  pivot_wider(names_from = year, values_from = stats) |> 
+  flextable() |> 
+  FitFlextableToPage()
+# 
+# ### first lets replace the negative values with 0
+# eblup_dt[eblup_dt < 0] <- 0
+# 
+# ### evaluating the normality assumption
+# 
+# #### first lets create a residual table by looking at the difference between actual and predicted poverty rates
+# resid_dt <- mfh_dt[,paste0("pov", year_set)] - eblup_dt
+# 
+# ### perform the shapiro test
+# 
+# shapiro_obj <- apply(resid_dt, 2, shapiro.test)
+# 
+# summary_dt <- 
+#   data.frame(Time = names(shapiro_obj),
+#              W = lapply(X = shapiro_obj,
+#                         FUN = function(x){
+#                           
+#                           return(x$statistic[[1]])
+#                           
+#                         }) %>%
+#                as.numeric(),
+#              p_value = lapply(X = shapiro_obj,
+#                               FUN = function(x){
+#                                 
+#                                 return(x$p.value)
+#                                 
+#                               }) %>%
+#                as.numeric())
+# 
+# ### plot the results
+# summary_dt <- 
+#   summary_dt %>%
+#   mutate(label = paste0("W = ", round(W, 3), "\n", "p = ", signif(p_value, 3)))
+# 
+# resid_dt %>%
+#   pivot_longer(cols = everything(), 
+#                names_to = "Time", 
+#                values_to = "Residual") %>%
+#   ggplot(aes(x = Residual)) + 
+#   geom_histogram(bins = 10, fill = "steelblue", color = "white") + 
+#   geom_text(data = summary_dt, aes(x = -Inf, y = Inf, label = label),
+#             hjust = -0.1, vjust = 1.2, inherit.aes = FALSE, size = 3.5) +
+#   facet_wrap(~Time, scales = "free") + 
+#   theme_minimal() + 
+#   labs(title = "Residual Histograms by Time Period")
+# 
+# 
+# ### here's how to create qqplots
+# resid_dt %>%
+#   pivot_longer(cols = everything(),
+#                names_to = "Time",
+#                values_to = "Residual") %>%
+#   ggplot(aes(sample = Residual)) +
+#   stat_qq() +
+#   stat_qq_line() +
+#   facet_wrap(~Time, scales = "free") +
+#   theme_minimal() +
+#   labs(title = "QQ Plots of Residuals by Time Period")
 
 ```
 
@@ -1186,46 +1226,46 @@ Likewise, we test the normality of the random effect variable
 ```{r}
 #| echo: true
 
-#### For the random effects
-raneff_dt <- as.data.frame(model2_obj$randomEffect)
-
-### lets run the shapiro wilks tests again
-shapiro_obj <- apply(raneff_dt, 2, shapiro.test)
-
-
-summary_dt <- 
-  data.frame(Time = names(shapiro_obj),
-             W = lapply(X = shapiro_obj,
-                        FUN = function(x){
-                          
-                          return(x$statistic[[1]])
-                          
-                        }) %>%
-               as.numeric(),
-             p_value = lapply(X = shapiro_obj,
-                              FUN = function(x){
-                                
-                                return(x$p.value)
-                                
-                              }) %>%
-               as.numeric())
-
-### plot the results
-summary_dt <- 
-  summary_dt %>%
-  mutate(label = paste0("W = ", round(W, 3), "\n", "p = ", signif(p_value, 3)))
-
-raneff_dt %>%
-  pivot_longer(cols = everything(), 
-               names_to = "Time", 
-               values_to = "RandEff") %>%
-  ggplot(aes(x = RandEff)) + 
-  geom_histogram(bins = 10, fill = "darkorange", color = "white") + 
-  geom_text(data = summary_dt, aes(x = -Inf, y = Inf, label = label),
-            hjust = -0.1, vjust = 1.2, inherit.aes = FALSE, size = 3.5) +
-  facet_wrap(~Time, scales = "free") + 
-  theme_minimal() + 
-  labs(title = "Random Effects Histograms by Time Period")
+# #### For the random effects
+# raneff_dt <- as.data.frame(model2_obj$randomEffect)
+# 
+# ### lets run the shapiro wilks tests again
+# shapiro_obj <- apply(raneff_dt, 2, shapiro.test)
+# 
+# 
+# summary_dt <- 
+#   data.frame(Time = names(shapiro_obj),
+#              W = lapply(X = shapiro_obj,
+#                         FUN = function(x){
+#                           
+#                           return(x$statistic[[1]])
+#                           
+#                         }) %>%
+#                as.numeric(),
+#              p_value = lapply(X = shapiro_obj,
+#                               FUN = function(x){
+#                                 
+#                                 return(x$p.value)
+#                                 
+#                               }) %>%
+#                as.numeric())
+# 
+# ### plot the results
+# summary_dt <- 
+#   summary_dt %>%
+#   mutate(label = paste0("W = ", round(W, 3), "\n", "p = ", signif(p_value, 3)))
+# 
+# raneff_dt %>%
+#   pivot_longer(cols = everything(), 
+#                names_to = "Time", 
+#                values_to = "RandEff") %>%
+#   ggplot(aes(x = RandEff)) + 
+#   geom_histogram(bins = 10, fill = "darkorange", color = "white") + 
+#   geom_text(data = summary_dt, aes(x = -Inf, y = Inf, label = label),
+#             hjust = -0.1, vjust = 1.2, inherit.aes = FALSE, size = 3.5) +
+#   facet_wrap(~Time, scales = "free") + 
+#   theme_minimal() + 
+#   labs(title = "Random Effects Histograms by Time Period")
 ```
 
 In both cases, we compare the p-value to the 0.05 level of significance. The results suggest that in most cases we have to reject the null hypothesis of normally distributed model errors and random effects. This doesn't affect the validity of our poverty estimates for the Multivariate Fay Herriot model. However, subsequent analysis that will assume a normal distribution of the model errors cannot be performed. One good example of this is the statistical significance test for changes in poverty rates over time. For the purposes of this tutorial, we will carry on to show how to perform this under the assumption of normally distributed model errors. However, if the test for normality fails, this test cannot be carried out.
@@ -1237,14 +1277,15 @@ Next, we will show the benefits of small area estimation over direct estimation
 ```{r, warning=FALSE, message = FALSE, error = FALSE}
 #| echo: true
 
-pov_mfh_dir_long <- 
-  pov_mfh |> 
-  bind_rows(pov_direct |>mutate(estimate = "Direct")) |> 
-  left_join(shp_dt) |> 
-  st_as_sf()
+# pov_mfh_dir_long <- 
+#   # pov_mfh |> 
+#   # bind_rows(pov_direct |>mutate(estimate = "Direct"))
+# pov_mfh_dir |> 
+#   left_join(geom_nuts3) |> 
+#   st_as_sf()
 
 pov_cv_year_dta <-
-  pov_mfh_dir_long |> 
+  pov_mfh_dir |> 
   mutate(name = str_remove(name, "PODREGION") |> str_trim()) |>  
   st_drop_geometry() |> 
   arrange(year) |> 
@@ -1254,6 +1295,9 @@ pov_cv_year_dta <-
 
 pov_cv_year <-
   pov_cv_year_dta |>  
+  filter(estimate %in% c(
+    "MFH1 (const. cov. 1y)", "MFH2 (const. cov. 1y)",
+    "UFH (0 cov)", "MFH2 (0 cov)", "Direct")) |> 
   fct_plot_scatter(
                x_var = "year",
                y_var = "CV",
@@ -1273,7 +1317,10 @@ pov_cv_year <-
              ) + 
   facet_wrap(. ~ name) + 
   scale_x_discrete() +
-  geom_line()
+  geom_line() +
+  coord_cartesian(ylim=c(0.1, 0.5)) +
+  # facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
 
 ggsave(filename = "output/pov-mhf-cv-years-regions.png", 
        plot = pov_cv_year, width = 15, height = 12, dpi = 200, scale = 1)
@@ -1281,6 +1328,9 @@ ggsave(filename = "output/pov-mhf-cv-years-regions.png",
 
 pov_pov_year <-
   pov_cv_year_dta |>  
+  filter(estimate %in% c(
+    "MFH1 (const. cov. 1y)", "MFH2 (const. cov. 1y)",
+    "UFH (0 cov)", "MFH2 (0 cov)", "Direct")) |> 
   fct_plot_scatter(
                x_var = "year",
                y_var = "pov",
@@ -1300,13 +1350,20 @@ pov_pov_year <-
              ) + 
   facet_wrap(. ~ name) + 
   scale_x_discrete() +
-  geom_line()
+  geom_line() +
+  coord_cartesian(ylim=c(0.05, 0.25)) +
+  # facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
+
 
 ggsave(filename = "output/pov-mhf-pov-years-regions.png", 
        plot = pov_pov_year, width = 15, height = 12, dpi = 200, scale = 1)
 
 pov_se_year <-
-  pov_cv_year_dta |>  
+  pov_cv_year_dta |> 
+  filter(estimate %in% c(
+    "MFH1 (const. cov. 1y)", "MFH2 (const. cov. 1y)",
+    "UFH (0 cov)", "MFH2 (0 cov)", "Direct")) |>  
   fct_plot_scatter(
                x_var = "year",
                y_var = "SD",
@@ -1326,7 +1383,11 @@ pov_se_year <-
              ) + 
   facet_wrap(. ~ name) + 
   scale_x_discrete() +
-  geom_line()
+  geom_line() + 
+  coord_cartesian(ylim=c(-0, 0.1)) +
+  # facet_wrap(. ~ year, scales = "free") + 
+  scale_color_hue()
+
 
 ggsave(filename = "output/pov-mhf-se-years-regions.png", 
        plot = pov_se_year, width = 15, height = 12, dpi = 200, scale = 1)
@@ -1344,7 +1405,7 @@ ggsave(filename = "output/pov-mhf-se-years-regions.png",
 pov_plots <-
   pov_cv_year_dta |>
   select(-name) |> 
-  left_join(shp_dt) |> 
+  left_join(geom_nuts3) |> 
   st_as_sf() |> 
   group_by(year2 = year, type2 = estimate) |>
   nest() |> 
@@ -1380,7 +1441,7 @@ pov_plots <-
                ~ fct_map_chreplot(.x, var_fill = "CV", 
                                   subtitle_glue = "{estimate}: {year}", 
                                   legend_glue = "CV",
-                                  force_breaks = c(.1, .2, .25, .3, .35, 
+                                  force_breaks = c(.05, .1, .2, .25, .3, .35, 
                                                    0.4, .45, .5, 0.65),
                                   label_form = label_number(0.01) 
                                         )))
@@ -1390,33 +1451,35 @@ pov_plots <-
 ```{r}
 plt1 <-
   pov_plots |> 
-  filter(type2 == "MFH-2") |> 
-  pull(plot_poverty) |>
+  filter(type2 %in% c("Direct","UFH (0 cov)", "MFH2 (0 cov)"),
+         year2 %in% c(2019, 2023)) |> 
+  pull(plot_poverty ) |>
   reduce( ~ .x + .y)  +
   patchwork::plot_layout(guides = "collect") 
 
 ggsave(
-    filename = "output/povmap_mfh2_pov.png",
+    filename = "output/povmap_mfh1_pov.png",
     width = 15, height = 8, dpi = 300,
     plot = plt1)
 
-
 plt2 <-
   pov_plots |> 
-  filter(type2 == "MFH-2") |> 
+  filter(type2 == "MFH1 (0 cov)") |> 
   pull(plot_CV) |>
   reduce( ~ .x + .y)  +
   patchwork::plot_layout(guides = "collect") 
 
 ggsave(
-    filename = "output/povmap_mfh2_cv.png",
+    filename = "output/povmap_mfh1_cv.png",
     width = 15, height = 8, dpi = 300,
     plot = plt2)
 ```
 
-![MHF2 Poverty map](output/povmap_mfh2_pov.png){#fig-mfh2-pov}
+![MHF2 (0 cov.) Poverty map](output/povmap_mfh1_pov.png){#fig-mfh2-pov}
 
-![MHF2 CV](output/povmap_mfh2_pov.png){#fig-mfh2-cv}
+![MHF1 (0 cov.) CV](output/povmap_mfh1_cv.png){#fig-mfh2-cv}
+
+
 
 ## Spatio-temporal trends in poverty by region
 
@@ -1440,7 +1503,7 @@ pov_trend_dta <-
     })) |> 
   ungroup() |> 
   unnest(c(sen)) |> 
-  left_join(shp_dt |> 
+  left_join(geom_nuts3 |> 
               select(id, name) |> 
               group_by(id) |> 
               filter(row_number() == 1) |> 
@@ -1467,14 +1530,14 @@ pov_trend_dta <-
           subtitle_glue = "Slope: {estimate}",
           legend_glue = "Slope",
           label_form = label_number(0.0001),
-          force_breaks = c(-0.03, -0.015, -.01, -.005, 0, 0.005, 0.01, 0.025, 0.04)
+          force_breaks = c(-100, -0.03, -0.015, -.01, -.005, 0, 0.005,
+                           0.01, 0.025, 0.04, 100)
         )
     })) 
 
-
 on_dta <- 
   pov_trend_dta |> 
-  filter(type2 == "MFH-2") 
+  filter(type2 == "MFH1 (0 cov)") 
   
 plt <- 
   pov_trend_dta$trend_p |> 
