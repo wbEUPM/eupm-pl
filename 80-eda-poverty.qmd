@@ -227,7 +227,6 @@ ggsave(
     plot = plt1)
 ```
 
-
 ![Direct estimates of poverty (arop)](output/povmap_arop_direct.png){#fig-dir-est-pov}
 
 ```{r figcalc-dir-est-se}
@@ -245,8 +244,6 @@ ggsave(
 ```
 
 ![SE of direct estimates of poverty (arop)](output/povmap_arop_se.png){#fig-dir-est-se}
-
-
 
 ```{r figcalc-dir-est-cv}
 plt <- 

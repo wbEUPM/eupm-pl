@@ -384,7 +384,7 @@ FitFlextableToPage <- function(ft, pgwidth = 6.5, size = 9) {
   ft_out <-
     ft |> fontsize(size = size, part = "all") |> 
     font(
-      fontname = "Times New Roman",
+      fontname = 'Open Sans',
       part = "all") |> 
     autofit()
   

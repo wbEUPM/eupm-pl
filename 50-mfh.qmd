@@ -45,7 +45,9 @@ pacman::p_load(
   matrixcalc,
   tidyverse,
   modelsummary,
-  flextable
+  flextable,
+  correlation,
+  datawizard
   )
 
 # Loading locally-developed
@@ -64,160 +66,448 @@ bd_clean <- root_clean |> board_folder(versioned = T)
 bd_out <- "output/res-50-mfh" |> board_folder(versioned = T)
 ```
 
-# Stable FH Estimators over T time periods: The Multivariate Fay Herriot Modelling Approach
+## Overview
 
-This section describes procedures that yield stable small area estimators for each of $D$ areas over $T$ subsequent time instants. Area populations, the samples and the data might change between time periods. Accordingly, we denote $U_t$ the overall population at time $t$, which is partitioned into $D$ areas $U_{1t}, ... ,U_{Dt}$, of respective population sizes $N_{1t}$
+This section describes procedures that yield stable small area estimators for each of $D$ areas over $T$ subsequent time instants. Area populations, the samples, and the data might change between time periods. Accordingly, we denote $U_t$ the overall population at time $t$, which is partitioned into $D$ areas $U_{1t}, ..., U_{Dt}$, of respective population sizes $N_{1t}$.
 
 An overview of the MFH model estimation process is as follows:
 
--   Step 0: The data preparation phase in which we prepare the 3 data objects needed for the small area estimation under the Multivariate Fay Herriot Model
+-   Step 1: The data preparation: direct poverty estimates, their corresponding sampling variances and covariances at the targeted area-level, and the area-level geometries. Usually completed in a different script.
 
--   Step 1: Compute the selected direct area estimators for each target area $d = 1, ..., D$ for each time $t = 1, ..., T$ and estimators of their corresponding sampling variances and covariances.
+-   Step 2: Preparing variables (from administrative data or other sources) representative at the target area level for each time instant.
 
--   Step 2: Prepare variables (from administrative data or other sources of data representative at the target area level) at the level of the target area for each time instant in the MFH model. We present a simple approach which performs model selection in a pooled linear regression model without time effects.
+    -   Selecting a handful of relevant covariates following one of the selection processes.
 
--   Step 3: Fit the MFH models to test for homoskedastic area-time effects $({\mu_d}_1, ... , {\mu_d}_T)$ are homoskedastic or not. If we reject the homoskedasticity of variances, implement the MFH3 model. Otherwise, we proceed with the MFH2 model. For the purposes of this training, we assume a homoskedastic model for simplicity.
+-   Step 3: Fit the MFH models across years of available data.
 
--   Step 4: Check the selected model assumptions, including linearity, normality of predicted area effects and standardized model residuals, and the presence of the outlying areas.
+    -   Test for homoskedastic area-time effects $({\mu_d}_1, ..., {\mu_d}_T)$. If we reject the homoskedasticity of variances, implement the MFH3 model. Otherwise, we proceed with the MFH2 model.
+
+    **Note**: For the purposes of this training, we assume a homoskedastic model for simplicity.
+
+-   Step 4: Check the selected assumptions, including: linearity, normality of predicted area effects and standardized residuals, and the presence of the outlying areas.
 
 -   Step 5: In case of systematic model departures such as isolated departures because of outlying areas, some adjustments might need to be implemented before returning to Step 2 to recompute the MFH model.
 
 -   Step 6: If model assumptions hold, using the above direct estimates and estimated sampling variances and covariances, and the selected auxiliary variables, compute MFH estimators $\hat{\delta}_{dt}^{MFH},\quad d = 1,...,D$ and $t = 1, ..., T$ and their corresponding estimated MSEs.
 
-We will show below the use of the `eblupMFH2()` and `eblupMFH3()` from the R package msae [@permatasari2022package] compute the EBLUPs and their MSE estimates under the MFH models 2 and 3, respectively. The calls to these functions are:
+Below, we demonstrate the use of:
 
-`eblupMFH2(formula, vardir, MAXITER = 100, PRECISION = 1e-04, data)`
+-   eblupUFH(): univariate Fay-Herriot model;
 
-`eblupMFH3(formula, vardir, MAXITER = 100, PRECISION = 1e-04, data)`
+-   eblupMFH1(): multivariate Fay-Herriot model (model 1) that assumes no autocorrelation and homoskedasticity;
 
-## MFH Estimation of Poverty Rates for T time periods
+-   eblupMFH2(): autoregressive multivariate Fay-Herriot model (model 2) that assumes autocorrelation but homoskedasticity;
 
-In this example, we use a synthetic data set adapted from R package `sae` called `incomedata`. The original data contains information for $n = 17,119$ fictitious individuals residing across $D = 52$ Spanish provinces. The variables include the name of the province of residence (`provlab`), province code (`prov`), as well as several correlates of income. We have added two additional income vectors corresponding to two additional years of data.
+-   eblupMFH3(): heteroskedastic and autoregressive multivariate Fay-Herriot model (model 3).
 
-We will show how to estimate a poverty map for each year by using the Multivariate Fay Herriot modelling approach. This approach allows us to take advantage of the temporal correlation between poverty rates i.e. an individuals income in year $t$ is likely correlated with their income in year $t+1$.
+All of it is implemented in the msae R package [@permatasari2022package], see ?eblupMFH1 for help.
 
-The rest of this tutorial shows how to prepare MFH models using a random 10% sample of the `incomedata` to estimate the poverty rates.
+### Data organization
 
-## Step 0: The Data Preparation Phase
+To ensure transparent data organization, we adopt a standard structure of the poverty estimates data produced in our analysis. Specifically, each estimation method produces data set of the following structure (@tbl-data-str).
 
-The MFH estimation process relies on 3 types of data:
+```{r echo=FALSE}
+#| label: tbl-data-str
+#| tbl-cap: Structure of the data resulting form MFH and other poverty estimates
+tribble(
+  ~Variable, ~Description,
+  "id", "Region ID",
+  "year", "Year",
+  "estimate", "Estimate type, e.g. UFH, MFH1, MHF2, MFH3, direct, etc.",
+  "type", "Poverty measure type (dependent variabel), e.g. AROP, AROPE, AROP anchored, AROP real.",
+  "pov", "Estimates of poverty",
+  "SE", "Standard errors of the direct estimates",
+  "vardir", "Variance (SE^2)",
+  "CV", "Coefficeint of variation (SE/pov)",
+   "var_SRS", "",
+  # "deff", "",
+  # "n_eff", "",
+  "v_pov20XX", "Covariance between poverty in current year versus year 20XX (multiple columns)"
+) |> 
+  flextable() |> FitFlextableToPage()
+```
 
-(1) Direct estimates of poverty and its variance: `direct_dt`
+For this example, we use actual data for Poland for 2011, 2019-2023.
 
-(2) Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each year. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id, year and variables of interest. In this example, we call this `rhs_dt`
+-   Direct estimates are prepared based on the confidential SILC data in the script `10-direct-estimates.qmd`.
 
-(3) Finally, geospatial boundaries of each target area: `shp_dt`
+-   Covariances between poverty rates across years prepared based on the confidential SILC data along with the direct estimates in `10-direct-estimates.qmd`.
 
-```{r dta-load}
-#| echo: false
+-   Right-hand-side variables, are prepared by the NSO using the [API](https://api.stat.gov.pl/Home/BdlApi) to their sub-national data base accessible through the R package [`bdl`](https://cran.r-project.org/package=bdl), see the script `20-other-variables.qmd`.
 
-# Direct estimates load 
-direct_dt <- bd_clean |> pin_read("pov_direct") |> 
+-   Sub-national geometries are available with the [`bdl`](https://cran.r-project.org/package=bdl) package and are prepared in `05-geometries.qmd`.
+
+**Note:** since we have multiple different types of poverty estimates, e.g. AROP, AROPE, AROP anchored, etc. we recommend creating separate scripts for preparing variable-specific poverty maps. This tutorial focuses exclusively on AROP poverty estimate.
+
+## Step 1: Data Preparation
+
+The MFH estimation process relies on: direct estimates, right hand side variables, subnational geometries, and poverty covaraince across time.
+
+### Direct estimates
+
+Direct estimates of poverty and its variance, `pov_direct`. Its is structure as outlined in @tbl-data-str. Below we presents the structure of this data set.
+
+```{r dta-load-direct}
+pov_direct <- bd_clean |> pin_read("pov_direct") |> 
+  rename(id = subcode) |> filter(type == "arop") |> 
+  mutate(estimate = "Direct")
+```
+
+```{r dta-str-pov-direct}
+pov_direct |> glimpse()
+```
+
+### Covariances between poverty rates
+
+Covariances are prepared together with the direct estimates, however, because they are created for each pair of years-specific poverty estimates at the regional level, their format differ from. In addition, we have covariance that are estimated based on the fully balanced data and based on the pairs of years, where only balanced panels for each pair of years is used. Column `vcoc_type` distinguishes between these two type of covariances.
+
+To be able to use covariances in our analysis, we need to:
+
+-   Transform data into the wide format, where:
+
+    -   Each row correspond to a single region
+
+    -   Each column shows poverty covariance between year A and year B.
+
+-   Assume that any pair of years that does not have a covariance estimate actually means that the covariance is zero.
+
+-   Replace any negative covariance with zero, or apply covariance smoothing to it if needed.
+
+```{r dta-load-covariance}
+pov_covar <-
+  bd_clean |> pin_read("pov_vcov") |> 
   rename(id = subcode) |> 
-  filter(type == "arop")
+  mutate(type = str_remove(from, "\\d{4}"),
+         across(c(from, to), ~ str_extract(., "\\d{4}"))) |> 
+  filter(type == "arop", variable == "covariance", from != to) |>
+  pivot_wider(names_from = c(from, to), values_from = value, names_prefix = "cov") |>
+  (\(x) {
+    expand.grid(id = unique(x$id), vcov_type = unique(x$vcov_type)) |> 
+      left_join(x, by = join_by(id, vcov_type)) |> 
+      as_tibble()
+  })() |> 
+  mutate(across(contains("cov"), ~ifelse(is.na(.), 0, .))) |> 
+  select(-variable) |> 
+  arrange(id, vcov_type)
+```
 
-# RHS variables
-widerhs_dt <-
-  paste0(root_raw, "/data-other", "/auxiliary-variables.xlsx") |>
-  readxl::read_excel() |> 
-  clean_rhs() |>
-  rename(id = ID) |> 
-  select(-No., -Subregion)
+Resulting covariance data has the following structure:
 
-rhs_vars <- paste0(root_raw, "/data-other", "/auxiliary-variables.xlsx") |>
+```{r dta-str-vcov}
+#| echo: true
+pov_covar |> glimpse()
+```
+
+### Right hand side variables
+
+Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each area consist of two components:
+
+-   Data present in the wide format, where each column represents an individual variable and row and observation for one area and one year. Stecifically columns are:
+
+    -   `id` regional identifier used to match RHS variables with regions and poverty estiamtes
+
+    -   `year` year for which observations are used.
+
+    -   `x1`, `x2`, `x3`, ..., `xn` are the RHS variables described in the metadata.
+
+-   Metadata table describes briefly each variable and provides a short, self-explaining name, used in regression tables.
+
+```{r dta-load-rhs}
+rhs_dta_0 <- 
+  suppressMessages(file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
+      readxl::read_excel()) 
+
+new_names <- 
+  rhs_dta_0 |> slice(1) |> t() |> as.data.frame() |>
+  rownames_to_column() |> as_tibble() |> 
+  mutate(rowname = ifelse(str_detect(rowname, "\\.{2,}"), NA_character_, rowname)) |> 
+  fill(rowname) |> 
+  mutate(rowname = str_to_lower(rowname),
+         rowname = ifelse(!is.na(V1), str_c(rowname,"__", V1), rowname)) |> 
+  pull(rowname)
+
+rhs_dta <- 
+  rhs_dta_0 |> 
+  slice(-1) |> 
+  (\(x){colnames(x) <- new_names; x})() |> 
+  select(-no., -subregion) |> 
+  pivot_longer(
+    cols = matches("\\d{4}"), 
+    values_transform = \(x) suppressWarnings(as.numeric(x))
+    ) |> 
+  filter(!is.na(value)) |> 
+  separate(name, into = c("var", "year")) |> 
+  mutate(year = as.numeric(year)) |> 
+  pivot_wider(names_from = "var", values_from = "value")
+
+
+rhs_meta <-
+  file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
   readxl::read_excel(sheet = 2) |> 
-  select(var = Variable, category = `Category of variable` , name = `Variable (in English)`)
+  select(var = Variable,
+         category = `Category of variable`,
+         name = `Variable (in English)`) |> 
+  mutate(var = str_to_lower(var))
+```
 
-# Geometries
-shp_dt <- bd_clean |> pin_read("geometries")
-shp_dt <- shp_dt$level4
+```{r dta-str-rhs}
+#| echo: true
+rhs_dta |> select(1:10) |> glimpse()
+rhs_meta |> glimpse()
+```
+
+### Geo-spatial boundaries
+
+Geo-spatial boundaries of each target area are loaded. We use NUTS2 and NUTS3 boundaries for plotting. Column `id` is used to map polygons to areas.
+
+```{r dta-load-gis}
+#| echo: false
 geoms <-  bd_clean |> pin_read("geometries")
 geom_nuts3 <- geoms$level4 |> rename(subcode = id)
 geom_nuts2 <- geoms$level2
+```
 
-# Key variable names
-area_vars <- c("id") 
+Lastly, we define a set of key variables names used in the code below as well as the range of years, for which we estimate our poverty estimates.
+
+```{r set-var-names}
+#| echo: true
+
+area_var <- c("id") 
 year_var <- "year"
 directpov <- "pov"
 directvar <- "vardir"
 year_set <- c(2019:2023)
 ```
 
-Data structure:
+## Step 2: Variables preparation and selection
 
-```{r}
-#| eval: false
-direct_dt |> glimpse()
-```
+At this step we prepared in the exact form that enables its use in `eblupUFH` and `eblupMFH` functions. This includes:
 
-`direct_dt` are the direct poverty estimates.
+-   Dependent variable preparation in the wide format with year-specific poverty rates as columns and regions as rows. `id` column is used as a regional identifier.
 
-```{r}
-#| eval: false
-widerhs_dt |> glimpse()
-```
+-   RHS variables preparation and reshaping:
 
-`rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
+    -   Computing economically sound ratios, constructing complex variables and performing linear transformation
 
-```{r}
-#| eval: false
-# shp_dt |> glimpse()
-```
+    -   Reshaping data to the wide format with variables names and years in columns and regions identified by `id` variable in rows.
 
-`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
+-   RHS variables selection that maximize the predictive power.
 
-## Step 2: Variable Preparation and Model Selection
-
-### Data Preparation for Model Selection & MFH estimation
-
-Thus far, we have careful set up the types of data we require for the MFH model. One final step of variable preparation is necessary to use the `eblupUFH` and `eblupMFH` functions. This requires that we reshape the set of candidate variables dataset i.e. the `rhs_dt` object into wide format. We will also have to reshape our direct estimates and merge this into `rhs_dt` as well as `var_dt`. All the data we have created thus far needs to be placed together ultimately for the EBLUP estimation.
+### Dependent variable preparation
 
 ```{r}
 #| echo: false
 mfh_dt0 <- 
-  direct_dt |>
+  pov_direct |>
   select(id, year, all_of(c(year_var, directpov, directvar))) |> 
   pivot_wider(
-    id_cols = area_vars,
+    id_cols = all_of(area_var),
     names_from = all_of(year_var),
     values_from = all_of(c(directpov, directvar)),
     names_glue = "{.value}{year}",
     values_fn = ~ dplyr::first(na.omit(.x))
-  ) |>
-  left_join(widerhs_dt, by = area_vars)
+  ) 
 ```
 
-Here is what the data looks like:
+Wide-format reshaped direct poverty estimates have the following structure:
 
 ```{r}
-#| echo: false
-#| eval: false
 mfh_dt0 |> glimpse()
 ```
 
-### Variable Preparation
+### RHS variables preparation
+
+While computing the new variables, we need to make sure that we:
+
+-   name them uniquely and appropriately;
+
+-   record relevant metadata for them.
+
+@tbl-rhs-descr-stats provides the summary statistics for the RHS variables after we computed additional ones.
 
 ```{r var-preparation}
-# Identify the columns of interest
-x_vars <- mfh_dt0 |> select(matches("^X\\d+y\\d+")) |> names()
-x_vars_numeric <- x_vars[sapply(mfh_dt0[x_vars], is.numeric)]
+rhs_dta0 <- 
+  rhs_dta |> 
+  mutate(
+    x101 = x4 / x3, # Share of Working Age pop in the region,
+    x102 = x6 / (x3 / x42),
+    x103 = x7 / (x3 / x42),
+    x104 = x8 / (x3 / x42),
+    x105 = x9 / (x3/10000),
+    x106 = x12 / (x3 / x42),
+    x118 = x12 / (x3 / x42),
+    x107 = x14 / (x3 / x42),
+    x108 = x23 / (x3/10000),
+    x109 = x41 /  (x3/10000),
+    x110 = x40 /  (x3/x42),
+    x111 = x22 /  (x3/x42),
+    x112 = x17 /  (x12),
+    x113 = x18 /  (x12),
+    x114 = x19 /  (x12),
+    x115 = x13 /  (x12),
+    x116 = x1 /  (x3 / 1000),
+    x117 = x2 /  (x3 / 1000),
+    x119 = x29 /  (x4 / 1000),
+    x120 = x30 /  (x4 / 1000)
+  ) |> 
+  select(#-x1, -x2, -x3, 
+         -x6, -x7, -x8, -x12, -x13,
+         -x17, -x18, -x19, -x31, -x33)
 
-# Function to min-max scale
-min_max_scale <- function(x) {
-  rng <- range(x, na.rm = TRUE)
-  (x - rng[1]) / (rng[2] - rng[1])
+rhs_meta_extra <- 
+  tribble(
+    ~var, ~name,
+    "x101", "Workage pop share",
+    "x102", "Sahre fam. poverty ben.",
+    "x103", "Sahre fam. homelessness ben.",
+    "x104", "Sahre fam. unemployment ben.",
+    "x105", "Market places per 10000 person",
+    "x106", "Dwelling appartment per family",
+    "x107", "Dwelling alowance per family",
+    "x108", "Pharmacies per 10000 person",
+    "x109", "Care facil. resid. per 10000 person",
+    "x110", "Childrent 0-3 per family",
+    "x111", "Share of families with Large Fam Card",
+    "x112", "Water, share dwel.",
+    "x113", "Heating, share dwel.",
+    "x114", "Gas, share dwel.",
+    "x115", "Rooms per apt.",
+    "x116", "Birth rate per 1000",
+    "x117", "Deth rate per 1000",
+    "x118", "Dwelling rooms per family",
+    "x119", "Immigrants per 1000 working pop",
+    "x120", "Emmigrants per 1000 working pop"
+  )
+
+rhs_meta_0 <- rhs_meta |> bind_rows(rhs_meta_extra)
+
+# # Identify the columns of interest
+# x_vars <- mfh_dt0 |> select(matches("^X\\d+y\\d+")) |> names()
+# x_vars_numeric <- x_vars[sapply(mfh_dt0[x_vars], is.numeric)]
+# 
+# # Function to min-max scale
+# min_max_scale <- function(x) {
+#   rng <- range(x, na.rm = TRUE)
+#   (x - rng[1]) / (rng[2] - rng[1])
+# }
+# 
+# # Mutate log and scaled versions
+# mfh_dt <-
+#   mfh_dt0 %>%
+#   mutate(
+#     # Add log-transformed columns
+#     across(all_of(x_vars_numeric), .fns = ~ log1p(.), .names = "log{.col}"),
+#     
+#     # Add min-max scaled columns
+#     across(all_of(x_vars_numeric), .fns = ~ min_max_scale(.), .names = "scaled{.col}")
+#   )
+```
+
+```{r tbl-rhs-descr-stats}
+#| tbl-cap: Descriptive statistics of the RHS variables
+rhs_dta0 |>
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
+  arrange(var_order) |>
+  left_join(rhs_meta_0, by = join_by(var)) |>
+  mutate(name = str_c(var, " ", name) |> as_factor()) |>
+  mutate(year = as.character(year)) |>
+  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
+  filter(year == "All years") |>
+  mutate(year = as_factor(year)) |>
+  datasummary(
+    formula = name  ~ value * (Mean + SD + Min + P50 + Max),
+    output = "flextable",
+    data = _
+  ) |>
+  FitFlextableToPage()
+```
+
+After all variables are computed, we perform logarithm transformation of all contentious variables, where maximum is above 10, or difference between min and maximum exceeds 10 times.
+
+```{r}
+var_to_log <- 
+  rhs_dta0 |>
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  group_by(year, var) |> 
+  summarise(min = min(value), max = max(value)) |> 
+  filter(min * 10 < max & max > 10 | max > 100) |> pull(var) |> unique()
+
+rhs_dta1 <- 
+  rhs_dta0 |>
+  group_by(year) |>
+  mutate(across(all_of(var_to_log), ~ log(.))) |> 
+  ungroup()
+```
+
+Descriptive statistics after transformation is:
+
+```{r tbl-rhs-descr-stats}
+#| tbl-cap: Descriptive statistics of the RHS variables after transformation
+rhs_dta1 |> mutate(type = "log") |> 
+  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
+  arrange(var_order) |>
+  left_join(rhs_meta_0, by = join_by(var)) |>
+  mutate(name = str_c(var, " ", name) |> as_factor()) |>
+  mutate(year = as.character(year)) |>
+  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
+  filter(year == "All years") |>
+  mutate(year = as_factor(year)) |> #glimpse()
+  datasummary(
+    formula = name  ~ value * (Mean ) * type,
+    output = "flextable",
+    data = _
+  ) |>
+  FitFlextableToPage()
+```
+
+### Exploratory correlation analysis
+
+Before conducting the variable selection, we explore the correlations between our transformed variables and the poverty rates.
+
+```{r tbl-cor}
+#| tbl-cap: Correlatoin between poverty rates and key variables
+stars.pval <- function(x){
+  stars <- c("***", "**", "*", "")
+  var <- c(0, 0.01, 0.05, 0.10, 1)
+  i <- findInterval(x, var, left.open = T, rightmost.closed = T)
+  stars[i]
 }
 
-# Mutate log and scaled versions
-mfh_dt <-
-  mfh_dt0 %>%
-  mutate(
-    # Add log-transformed columns
-    across(all_of(x_vars_numeric), .fns = ~ log1p(.), .names = "log{.col}"),
-    
-    # Add min-max scaled columns
-    across(all_of(x_vars_numeric), .fns = ~ min_max_scale(.), .names = "scaled{.col}")
-  )
+dta_cor <-
+  rhs_dta1 |> mutate(type = "log") |> 
+  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
+  mutate(year = year + 1) |> 
+  left_join(pov_direct |> filter(type == "arop") |> select(id, year, pov)) |> 
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  filter(!is.na(pov)) |> 
+  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
+  arrange(var_order) |>
+  left_join(rhs_meta_0, by = join_by(var)) |>
+  mutate(name = str_c(var, " ", name) |> as_factor()) |>
+  mutate(year = as.character(year)) |>
+  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
+  filter(year == "All years") |>
+  mutate(year = as_factor(year)) |> 
+  # filter(str_detect(var, "x10")) |> 
+  select(id, year, type, pov, value, name) |> 
+  pivot_wider(names_from = name, values_from = value) |> 
+  datawizard::data_group(type) |>
+  correlation::correlation() |> 
+  as_tibble() |> 
+  filter(Parameter1 == "pov") |> 
+  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |> 
+  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |> 
+  select(Group, Variable = Parameter2, stats) |>
+  pivot_wider(names_from = Group, values_from = stats) |> 
+  arrange(Variable)
+
+dta_cor |> 
+  flextable() |>
+  FitFlextableToPage()
+
 ```
 
 ### Variable Selection
@@ -226,130 +516,180 @@ Next, we apply a simple variable selection process which employs the stepwise re
 
 ```{r var-selection}
 #| echo: false
-candidate_vars <- c(#x_vars_numeric,
-                    paste0("log", x_vars_numeric)#,
-                    # paste0("scaled", x_vars_numeric)
-                    )
+dta_full <-
+  rhs_dta1 |> 
+  mutate(year = year + 1) |> 
+  left_join(pov_direct |> filter(type == "arop") |> 
+              select(all_of(c(area_var, year_var, directpov, directvar)))) |> 
+  filter(!is.na(pov)) |> 
+  select(-where(~any(is.na(.))))
 
-bad_vars <- candidate_vars[sapply(mfh_dt[candidate_vars], function(col) any(!is.finite(col)))]
-candidate_vars <- candidate_vars[!candidate_vars %in% bad_vars]
+dta_full_wide <- 
+  dta_full |> 
+  pivot_wider(
+    names_from = year, 
+    values_from = c(contains("x"), all_of(c(directpov, directvar))), 
+    names_sep = "_") |> 
+  select(id, contains(directpov), contains(directvar), everything())
 
+candidate_vars <- dta_full |> select(contains("x")) |> names()
 
 fh_step <-
-  year_set |>
-  map( ~ {
-    year_local <- .x |> as.character()
-    year_local_lag <- as.character(as.numeric(year_local) - 1)
-    candidate_vars_local <- candidate_vars[str_detect(candidate_vars, year_local_lag)]
-    dta_local <- mfh_dt |> as_tibble() |> 
-      dplyr::select(contains("pov"), contains(year_local_lag))
-    y_local <- mfh_dt |> dplyr::select(contains("pov")) |> 
-      dplyr::select(contains(year_local)) |> names()
-    # browser()
+  set_names(year_set, year_set) |>
+  imap( ~ {
+    dta_local <- dta_full |> filter(year == .x) 
     model_obj <-
       step_wrapper(
         dt = dta_local,
-        xvars = candidate_vars_local,
-        y = y_local,
-        cor_thresh = 0.8,
-        k = 2,
+        xvars = candidate_vars,
+        y = directpov,
+        cor_thresh = 0.7,
+        k = 3,
         trace = 0
       ) ### using log(n) to force BIC selection
-    
-    xx <- names(model_obj$coefficients)[!grepl("(Intercept)", names(model_obj$coefficients))]
-    return(xx)
+    out <- names(model_obj$coefficients)
+    out[!str_detect(out, "Intercept")]
+  }) |> 
+  map(~{
+    .x[1:(min(2, length(.x)))]
   })
 
 
 # Set of formulas for the Multivariate FH
 mfh_formula <-
-  mapply(FUN = function(x, rhs){
-    y <- as.formula(paste0(x, " ~ ", paste(rhs, collapse = " + ")))
-    return(y)
-  },
-  x = paste0(directpov, year_set),
-  rhs = fh_step,
-  SIMPLIFY = FALSE)
+  fh_step |> 
+  imap(~{
+    c(str_c(directpov, "_", .y),
+      " ~ ",
+      str_c(.x, "_", .y) |> str_c(collapse = " + ")) |>
+      str_c(collapse = "") |> as.formula()
+  })
+  
+# Single formula for MVFH
+model_pooled <-
+  step_wrapper(
+    dt = dta_full,
+    xvars = candidate_vars,
+    y = directpov,
+    cor_thresh = 0.7,
+    k = 2, #log(nrow(dta_full)),
+    trace = 0
+  ) ### using log(n) to force BIC selection
 
+coef_pooled <- names(model_pooled$coefficients)
+coef_pooled <- coef_pooled[!str_detect(coef_pooled, "Intercept")]
+form_pooled <- c(directpov,  " ~ ", str_c(coef_pooled, collapse = " + ")) |> str_c(collapse = "") |> 
+  as.formula()
+```
+
+```{r tbl-varsel-mfh-1}
+#| tbl-cap: Multiple linear regressions on slected variables
 ### here is what the 3 equations look like
 mfh_formula |> 
-  map(~lm(.x, data = mfh_dt)) |> 
+  map(~lm(.x, data = dta_full_wide)) |> 
   modelsummary(
     output = "flextable", 
     estimate = "{estimate}{stars} ({std.error})", 
     statistic = NULL,
     coef_rename = function(x) {
+      # browser()
       x |>
-        str_remove_all("y\\d{4}") |> 
+        str_remove_all("_\\d{4}") |> 
         map_chr( ~ {
-          match_coef <- rhs_vars |> filter(var == str_replace(.x, "log", "")) |> pull(name)
-          # browser()
+          match_coef <- rhs_meta_0 |> filter(var == .x) |> pull(name)
           if (is.null(match_coef) | length(match_coef) == 0) {
             return(.x)
           } else {
             return(match_coef)
           }
         })
-      
     }
   ) |> 
   autofit() |> 
   width(j = 1, width = 3)
 ```
 
-Notes: Significance levels are: `***` p-value < 0.001, `***` p-value < 0.01, `*` p-value < 0.05, `+` p-value < 0.1 
+```{r tbl-varsel-mfh-2}
+#| tbl-cap: Multiple linear regressions on the same set of variables
+set_names(year_set, year_set)  |> 
+  imap(~lm(form_pooled, data = dta_full |> filter(year == .x))) |> 
+  modelsummary(
+    output = "flextable", 
+    estimate = "{estimate}{stars} ({std.error})", 
+    statistic = NULL,
+    coef_rename = function(x) {
+      # browser()
+      x |>
+        str_remove_all("_\\d{4}") |> 
+        map_chr( ~ {
+          match_coef <- rhs_meta_0 |> filter(var == .x) |> pull(name)
+          if (is.null(match_coef) | length(match_coef) == 0) {
+            return(.x)
+          } else {
+            return(match_coef)
+          }
+        })
+    }
+  ) |> 
+  autofit() |> 
+  width(j = 1, width = 3)
+
+```
+
+Notes: Significance levels are: `***` p-value \< 0.001, `***` p-value \< 0.01, `*` p-value \< 0.05, `+` p-value \< 0.1
 
 ## Step 3: Fitting the Multivariate Fay Herriot Model
 
 Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
 
 ```{r mvfh-est}
-#| echo: false
-#| eval: false
-prepare_vcov <- function(){
-  vc <- paste0(directvar, year_set)
-  
-  # Generate all unique pairs (upper triangle only, including diagonal)
-  all_pairs <- t(combn(vc, 2))
-  colnames(all_pairs) <- c("var1", "var2")
-  
-  # Convert to data.frame (this contains only the covariances)
-  covariances <- as.data.frame(all_pairs, 
-                               stringsAsFactors = FALSE)  
-  
-  covariances <- 
-    covariances |>
-    mutate(fn = paste0(var1, var2))
-  
-  return(covariances$fn)
-  
-}
+dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
+dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
 
-mfh_dt[, prepare_vcov()] <- 0
-varcols <- c(paste0(directvar, year_set), prepare_vcov())
-yvars <- paste0(directpov, year_set)
+dta_mhf_cov1 <- 
+  dta_mhf |> 
+  mutate(vov1 = cov2019_2020,
+         # vov2 = cov2020_2021,
+         # vov3 = cov2021_2022,
+         # vov4 = cov2022_2023,
+         across(contains("cov"), ~ 0),
+         cov2019_2020 = vov1#,
+         # cov2020_2021 = vov2,
+         # cov2021_2023 = vov3,
+         # cov2022_2023 = vov4
+         ) |> 
+  select(-contains("vcov"))
+
+y_cols <- dta_mhf |> select(contains("pov")) |> names()
+var_cols <- dta_mhf |> select(contains("var"), contains("cov")) |> names()
 
 # Univariate FH
-model0_obj <- eblupUFH(mfh_formula[yvars], vardir = varcols, data = mfh_dt)
+model0_obj <- eblupUFH(mfh_formula, vardir = var_cols, data = dta_mhf)
 bd_out |> pin_write(model0_obj, type = "rds")
 
 # multivariate FH 1
 tic(msg = "eblupMFH1")
-model1_obj <- eblupMFH1(mfh_formula[yvars], 
-                        vardir = varcols, 
-                        data = mfh_dt, 
-                        MAXITER = 10000, 
-                        PRECISION = 0.001)
+model1_obj <- eblupMFH1_v2(mfh_formula, 
+                        vardir = var_cols, 
+                        data = dta_mhf_cov1, 
+                        MAXITER = 100, 
+                        PRECISION = 0.01)
+
+
+model0_obj$fit$estcoef |> all.equal(model1_obj$fit$estcoef)
+model0_obj$eblup |> all.equal(model1_obj$eblup)
+
 bd_out |> pin_write(model1_obj, type = "rds")
 toc()
 
 # multivariate FH 2
 tic(msg = "eblupMFH2")
-model2_obj <- eblupMFH2(mfh_formula[yvars], 
-                        vardir = varcols, 
-                        data = mfh_dt, 
+model2_obj <- eblupMFH2_v2(mfh_formula, 
+                        vardir = var_cols, 
+                        data = dta_mhf_cov1, 
                         MAXITER = 10000, 
-                        PRECISION = 0.001)
+                        PRECISION = 0.01)
+
 bd_out |> pin_write(model2_obj, type = "rds")
 toc()
 
@@ -361,7 +701,6 @@ model1_obj <- bd_out |> pin_read("model1_obj")
 model2_obj <- bd_out |> pin_read("model2_obj")
 ```
 
-
 Saving results of the models
 
 ```{r res-save}
@@ -370,12 +709,13 @@ ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
   # ids <- mfh_dt |> select(id)
   eblup_dt <- fit$eblup |> as_tibble()
   mse_dt <- fit$MSE |> as_tibble() |> rename_with( ~ str_replace(., "pov", "vardir"))
-  
+  # browser()
   bind_cols(ids, eblup_dt, mse_dt) |>
     pivot_longer(c(contains("pov"), contains("vardir"))) |>
     mutate(year = str_extract(name, "\\d{4}") |> as.integer(),
            name = str_remove(name, "\\d{4}")) |>
     pivot_wider(values_from = value, names_from = name) |>
+    rename_with(.fn = ~ str_remove(., "_"), .cols = c(contains("pov"), contains("vardir"))) |> 
     mutate(
       CV  = sqrt(vardir) / pov,
       SD = sqrt(vardir),
@@ -385,17 +725,16 @@ ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
 }
 
 pov_mfh <- 
-  # ext_mfh_dta(model0_obj,  select(mfh_dt, id), type = "arop", estimate = "UFH (MFH)") |> 
+  ext_mfh_dta(model0_obj,  select(dta_mhf, id), type = "arop", estimate = "UFH (MFH)") |>
   bind_rows(
-    ext_mfh_dta(model1_obj,  select(mfh_dt, id), type = "arop", estimate = "MFH-1")
+    ext_mfh_dta(model1_obj,  select(dta_mhf, id), type = "arop", estimate = "MFH-1")
   ) |> 
   bind_rows(
-    ext_mfh_dta(model2_obj,  select(mfh_dt, id), type = "arop", estimate = "MFH-2")
+    ext_mfh_dta(model2_obj,  select(dta_mhf, id), type = "arop", estimate = "MFH-2")
   )
   
 bd_clean |> pin_write(pov_mfh, name = "pov_mfh", type = "rds")
 ```
-
 
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
 
@@ -405,7 +744,7 @@ We now verify the assumptions of the MFH3 model. This includes assessing lineari
 
 ```{r}
 pov_mfh |> 
-  bind_rows(direct_dt |> mutate(estimate = "Direct")) |> 
+  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
   ggplot() + 
   aes(y = SD, x = pov, colour = estimate ) + 
   geom_point() + 
@@ -419,7 +758,7 @@ pov_mfh |>
 
 ```{r}
 pov_mfh |> 
-  bind_rows(direct_dt |> mutate(estimate = "Direct")) |> 
+  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
   ggplot() + 
   aes(y = CV, x = pov, colour = estimate ) + 
   geom_point() + 
@@ -437,7 +776,7 @@ pov_mfh |>
 library(glue)
 pov_mfh_dir <- 
   pov_mfh |> 
-  left_join(direct_dt |>
+  left_join(pov_direct |>
               select(
                 id,
                 year,
@@ -483,7 +822,6 @@ pov_mfh_dir |>
   facet_wrap(. ~ year, scales = "free")
 ```
 
-
 #### SE
 
 ```{r}
@@ -501,7 +839,6 @@ pov_mfh_dir |>
   ) +
   facet_wrap(. ~ year, scales = "free")
 ```
-
 
 ### Linearity Test
 
@@ -721,7 +1058,7 @@ Next, we will show the benefits of small area estimation over direct estimation
 
 pov_mfh_dir_long <- 
   pov_mfh |> 
-  bind_rows(direct_dt |>mutate(estimate = "Direct")) |> 
+  bind_rows(pov_direct |>mutate(estimate = "Direct")) |> 
   left_join(shp_dt) |> 
   st_as_sf()
 
@@ -899,7 +1236,6 @@ ggsave(
 ![MHF2 Poverty map](output/povmap_mfh2_pov.png){#fig-mfh2-pov}
 
 ![MHF2 CV](output/povmap_mfh2_pov.png){#fig-mfh2-cv}
-
 
 ## Spatio-temporal trends in poverty by region
 
