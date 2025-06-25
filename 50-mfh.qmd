@@ -544,15 +544,16 @@ fh_step <-
         xvars = candidate_vars,
         y = directpov,
         cor_thresh = 0.7,
-        k = 3,
+        k = log(nrow(dta_local)),
         trace = 0
       ) ### using log(n) to force BIC selection
     out <- names(model_obj$coefficients)
     out[!str_detect(out, "Intercept")]
-  }) |> 
-  map(~{
-    .x[1:(min(2, length(.x)))]
-  })
+  }) 
+# |> 
+#   map(~{
+#     .x[1:(min(2, length(.x)))]
+#   })
 
 
 # Set of formulas for the Multivariate FH
@@ -568,11 +569,11 @@ mfh_formula <-
 # Single formula for MVFH
 model_pooled <-
   step_wrapper(
-    dt = dta_full,
+    dt = dta_full |> select(pov, contains("x1")),
     xvars = candidate_vars,
     y = directpov,
-    cor_thresh = 0.7,
-    k = 2, #log(nrow(dta_full)),
+        cor_thresh = 0.7,
+        k = log(nrow(dta_full)),
     trace = 0
   ) ### using log(n) to force BIC selection
 
@@ -633,78 +634,106 @@ set_names(year_set, year_set)  |>
   ) |> 
   autofit() |> 
   width(j = 1, width = 3)
-
 ```
 
 Notes: Significance levels are: `***` p-value \< 0.001, `***` p-value \< 0.01, `*` p-value \< 0.05, `+` p-value \< 0.1
 
 ## Step 3: Fitting the Multivariate Fay Herriot Model
 
-Next, we show how to use the `msae` R package to estimate the Empirical Best Linear Unbiased Predictor (EBLUP) for the poverty map using the `eblupMFH2()` which allow for time series fay herriot estimation under homoskedastic assumptions. For completeness, we also briefly perform the previous described direct estimation in step 1, using the `eblupUFH()` function as well as the `eblupMFH1()` for the fay herriot model.
-
-```{r mvfh-est}
-dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
-dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
-
-dta_mhf_cov1 <- 
-  dta_mhf |> 
-  mutate(vov1 = cov2019_2020,
-         # vov2 = cov2020_2021,
-         # vov3 = cov2021_2022,
-         # vov4 = cov2022_2023,
-         across(contains("cov"), ~ 0),
-         cov2019_2020 = vov1#,
-         # cov2020_2021 = vov2,
-         # cov2021_2023 = vov3,
-         # cov2022_2023 = vov4
+```{r fn-run-eblups}
+# Run eblup estimates for UVFH and MVFH
+est_ufh_mfh1 <- function(dta, formula, 
+                         iter = 500, precision = 0.0001,
+                         verbose = FALSE) {
+  
+  var_cols <- dta |> select(contains("vardir"), contains("cov")) |> names()
+  print(formula)
+  cat("eblupUFH --- \n")
+  tic(msg = "eblupUFH")
+  model0_obj <- try({
+    eblupUFH(
+      formula = formula,
+      vardir = var_cols,
+      data = dta,
+      MAXITER = iter,
+      PRECISION = precision
+    )
+  }, silent = T
+  )
+  toc()
+  
+  cat("eblupMFH1 --- \n")
+  tic(msg = "eblupMFH1")
+  if (verbose) {
+    model1_obj <- try({
+      eblupMFH1_v2(
+        formula = formula,
+        vardir = var_cols,
+        data = dta,
+        MAXITER = iter,
+        PRECISION = precision
+      )
+    }, silent = T
+    )
+  } else {
+    model1_obj <- try({
+      eblupMFH1(
+        formula = formula,
+        vardir = var_cols,
+        data = dta,
+        MAXITER = iter,
+        PRECISION = precision
+      )
+    }, silent = T
+    )
+  }
+  toc()
+  
+  
+  cat("eblupMFH2 --- \n")
+  tic(msg = "eblupMFH2")
+  if (verbose) {
+    model1_obj <- try({
+      eblupMFH2_v2(
+        formula = formula,
+        vardir = var_cols,
+        data = dta,
+        MAXITER = iter,
+        PRECISION = precision
+      )
+    }, silent = T
+    )
+  } else {
+    model2_obj <- try({
+      eblupMFH2(
+        formula = formula,
+        vardir = var_cols,
+        data = dta,
+        MAXITER = iter,
+        PRECISION = precision
+      )
+    }, silent = T
+    )
+  }
+  toc()
+  
+  # Results 
+  tibble(model = c("UFH", "MFH1", "MFH2"),
+         eblups = list(model0_obj, model1_obj, model2_obj)
          ) |> 
-  select(-contains("vcov"))
+    mutate(results = map(eblups, ~{
+      if (!"try-error" %in% class(.x)) {
+        out <- ext_mfh_dta(.x,
+                           select(dta_mhf, id),
+                           type = "arop",
+                           estimate = "UFH (MFH)")
+      } else {
+        out <- tibble()
+      }
+    }))
+}
 
-y_cols <- dta_mhf |> select(contains("pov")) |> names()
-var_cols <- dta_mhf |> select(contains("var"), contains("cov")) |> names()
-
-# Univariate FH
-model0_obj <- eblupUFH(mfh_formula, vardir = var_cols, data = dta_mhf)
-bd_out |> pin_write(model0_obj, type = "rds")
-
-# multivariate FH 1
-tic(msg = "eblupMFH1")
-model1_obj <- eblupMFH1_v2(mfh_formula, 
-                        vardir = var_cols, 
-                        data = dta_mhf_cov1, 
-                        MAXITER = 100, 
-                        PRECISION = 0.01)
-
-
-model0_obj$fit$estcoef |> all.equal(model1_obj$fit$estcoef)
-model0_obj$eblup |> all.equal(model1_obj$eblup)
-
-bd_out |> pin_write(model1_obj, type = "rds")
-toc()
-
-# multivariate FH 2
-tic(msg = "eblupMFH2")
-model2_obj <- eblupMFH2_v2(mfh_formula, 
-                        vardir = var_cols, 
-                        data = dta_mhf_cov1, 
-                        MAXITER = 10000, 
-                        PRECISION = 0.01)
-
-bd_out |> pin_write(model2_obj, type = "rds")
-toc()
-
-```
-
-```{r mvfh-load}
-model0_obj <- bd_out |> pin_read("model0_obj")
-model1_obj <- bd_out |> pin_read("model1_obj")
-model2_obj <- bd_out |> pin_read("model2_obj")
-```
-
-Saving results of the models
-
-```{r res-save}
-# model0_obj
+# Extract EBLUP statistics
 ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
   # ids <- mfh_dt |> select(id)
   eblup_dt <- fit$eblup |> as_tibble()
@@ -724,16 +753,160 @@ ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
     )
 }
 
-pov_mfh <- 
-  ext_mfh_dta(model0_obj,  select(dta_mhf, id), type = "arop", estimate = "UFH (MFH)") |>
-  bind_rows(
-    ext_mfh_dta(model1_obj,  select(dta_mhf, id), type = "arop", estimate = "MFH-1")
-  ) |> 
-  bind_rows(
-    ext_mfh_dta(model2_obj,  select(dta_mhf, id), type = "arop", estimate = "MFH-2")
-  )
+```
+
+### MFH with zero covariance
+
+As a starting point, we run UFH and MFH1 (only 1) with the zero covariance between years.
+
+```{r mvfh-zero-cov-est, eval=FALSE}
+dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
+dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
+
+eblup_zero_cov <-
+  dta_mhf |> mutate(across(contains("cov"), ~ 0)) |> 
+  est_ufh_mfh1(dta = _, formula = mfh_formula, verbose = T) |>
+  mutate(model = str_c(model, " (0 cov)"))
+
+bd_out |> pin_write(eblup_zero_cov, type = "rds")
+
+eblup_const_cov <-
+  dta_mhf |> 
+  mutate(
+    across(contains("cov"), ~ . / 3),
+    across(all_of(c(
+      #"cov2019_2020", "cov2020_2021", "cov2021_2022", "cov2022_2023",
+      "cov2019_2021", "cov2019_2022", "cov2019_2023",
+       "cov2020_2022", "cov2020_2023", "cov2021_2023"
+      )), ~ 0)
+    ) |> 
+  est_ufh_mfh1(dta = _, formula = mfh_formula, verbose = T, precision = 0.001) |>
+  mutate(model = str_c(model, " (const. cov. 1y)"))
+
+bd_out |> pin_write(eblup_const_cov, type = "rds")
+```
+
+```{r}
+# eblup_zero_cov <- bd_out |> pin_read("eblup_zero_cov")
+# eblup_zero_cov$eblups[[1]]$eblup |> all.equal(eblup_zero_cov$eblups[[2]]$eblup)
+# 
+# eblup_const_cov <- bd_out |> pin_read("eblup_const_cov")
+# eblup_zero_cov$eblups[[1]]$eblup |> all.equal(eblup_const_cov$eblups[[1]]$eblup)
+# 
+# 
+# eblup_zero_cov$eblups[[2]]$eblup |> all.equal(eblup_const_cov$eblups[[2]]$eblup)
+
+
+```
+
+
+```{r mfh-two-years-pairs, eval=FALSE}
+dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
+dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
+
+# one_comb <- c(2020, 2021)
+
+est_mfh_pair <- function(one_comb) {
   
-bd_clean |> pin_write(pov_mfh, name = "pov_mfh", type = "rds")
+  mfh_formula_local <- mfh_formula[names(mfh_formula) %in% one_comb]
+  
+  # Vcov combinations
+  var_cols_1 <-
+    one_comb |>
+    map( ~ {
+      dta_mhf |> select(contains(as.character(.x))) |>
+        select(contains("vardir"), contains("cov")) |>
+        names()
+    }) |>
+    unlist()
+  
+  var_cols_2 <- var_cols_1[str_detect(var_cols_1, "vardir")]
+  all_comb <- combn(one_comb, m = 2, simplify = T)
+  all_comb <- str_c(all_comb[1, ], "_", all_comb[2, ])
+  var_cols_3  <- var_cols_1[str_detect(var_cols_1, str_c(all_comb, collapse = "|"))] |>
+    unique()
+  
+  # vcov specification
+  var_cols_local <- c(var_cols_2, var_cols_3)
+  
+  # Univariate FH
+  cat("UVFH\n")
+  model0_obj <- try(eblupUFH(mfh_formula_local, vardir = var_cols_local, data = dta_mhf))
+  
+  # MFH 1
+  cat("MFH1\n")
+  model1_obj <- try(eblupMFH1_v2(
+    mfh_formula_local,
+    vardir = var_cols_local,
+    data = dta_mhf,
+    MAXITER = 1000,
+    PRECISION = 0.01
+  ))
+  
+  # MFH 2
+  cat("MFH2\n")
+  # model2_obj <- try({eblupMFH2_v2(
+  #   mfh_formula_local,
+  #   vardir = var_cols_local,
+  #   data = dta_mhf,
+  #   MAXITER = 1000,
+  #   PRECISION = 0.001
+  # )}, silent = T)
+  
+  tibble(
+    year_min = min(one_comb),
+    year_max = max(one_comb),
+    model = c("UFH", "MFH1"), # "MFH2"),
+    eblups = list(model0_obj, model1_obj) #, model2_obj)
+  )
+}
+
+# est_mfh_pair(c(2019, 2020, 2021))
+eblup_pairs_2y <-
+  list(c(2019, 2020), 
+       c(2020, 2021),
+       c(2021, 2022),
+       c(2022, 2023)) |>
+  map( ~ {est_mfh_pair(.x)}) |> 
+  bind_rows() |> 
+  mutate(results =
+           map(eblups, ~{
+             # browser()
+             if (!"try-error" %in% class(.x)) {
+               out <- ext_mfh_dta(.x,
+                                  select(dta_mhf, id),
+                                  type = "arop",
+                                  estimate = "UFH (MFH)")
+             } else {
+               out <- tibble()
+             }
+           })) |> 
+  mutate(estimate = str_c(model, " (", year_min, "-", year_max, ")"))
+
+
+bd_out |> pin_write(eblup_pairs_2y, type = "rds")
+
+```
+
+
+Saving results of the models
+
+```{r res-save}
+# model0_obj
+mod_dta <-
+  bd_out |> pin_read("eblup_const_cov") |> 
+  bind_rows(bd_out |> pin_read("eblup_zero_cov")) |> 
+  bind_rows(bd_out |> pin_read("eblup_pairs_2y")) |>
+  mutate(model = ifelse(!is.na(estimate), estimate, model)) |>
+  rename(est2 = estimate) |>
+  unnest(results) |> 
+  bind_rows(pov_direct |> mutate(model = "Direct")) |> 
+  mutate(estimate = model) |> 
+  filter(str_detect(estimate, "Direct|MFH|UFH.{1,2}0")) |> 
+  mutate(estimate = as_factor(estimate))
+  
+# mod_dta |> count(estimate)
+# bd_clean |> pin_write(pov_mfh, name = "pov_mfh", type = "rds")
 ```
 
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers
@@ -743,28 +916,36 @@ We now verify the assumptions of the MFH3 model. This includes assessing lineari
 ### SE vs Poverty
 
 ```{r}
-pov_mfh |> 
-  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
+mod_dta |> filter(year %in% 2022) |>
   ggplot() + 
-  aes(y = SD, x = pov, colour = estimate ) + 
-  geom_point() + 
-  geom_smooth() +
-  facet_wrap(. ~ year, scales = "free") + 
+  aes(y = SD, x = pov, colour = estimate) + 
+  geom_point(size = 3, aes(shape = estimate)) +
+  # geom_smooth(se = FALSE) +
+  facet_wrap(. ~ year, scales = "free") +
+  # scale_shape_manual(values= c(21, 24, 23, 22, 3, 4, 5, 7, 8, 10)[1:nlevels(mod_dta$estimate)]) + 
   scale_y_continuous("SE") + 
+  coord_cartesian(ylim=c(0, 0.075)) +
+  coord_cartesian(xlim=c(0, 0.4)) +
+  ylim(c(0, 0.075)) +
+  # xlim(c(0, 0.4)) +
   theme_bw()
 ```
 
 ### CV vs Poverty
 
 ```{r}
-pov_mfh |> 
-  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
+mod_dta |> #filter(year %in% 2023) |>
   ggplot() + 
-  aes(y = CV, x = pov, colour = estimate ) + 
-  geom_point() + 
-  geom_smooth() +
-  facet_wrap(. ~ year, scales = "free") + 
+  aes(y = CV, x = pov, colour = estimate) + 
+  geom_point(size = 1) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(. ~ year, scales = "free") +
+  # scale_shape_manual(values= c(21, 24, 23, 22, 3, 4, 5, 7, 8, 10)[1:nlevels(mod_dta$estimate)]) + 
   scale_y_continuous("CV") + 
+  coord_cartesian(ylim=c(0, 0.075)) +
+  coord_cartesian(xlim=c(0, 0.4)) +
+  ylim(c(0, 0.75)) +
+  # xlim(c(0, 0.4)) +
   theme_bw()
 ```
 
