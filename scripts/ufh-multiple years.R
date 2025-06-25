@@ -155,23 +155,9 @@ rhs_meta_extra <-
 
 rhs_meta_0 <- rhs_meta |> bind_rows(rhs_meta_extra)
 
-# Descriptive statistics
-rhs_dta0 |>
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |>
-  datasummary(
-    formula = name  ~ value * (Mean + SD + Min + P50 + Max),
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
+# After all variables are computed, we perform logarithm transformation of all 
+# continuous variables, where maximum is above 10, or difference between min and 
+# maximum exceeds 10 times.
 
 var_to_log <- 
   rhs_dta0 |>
@@ -185,69 +171,6 @@ rhs_dta1 <-
   group_by(year) |>
   mutate(across(all_of(var_to_log), ~ log(.))) |> 
   ungroup()
-
-# Descriptive statistics after transformation is:
-rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> #glimpse()
-  datasummary(
-    formula = name  ~ value * (Mean ) * type,
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
-
-# Correlatoin between poverty rates and key variables
-
-stars.pval <- function(x){
-  stars <- c("***", "**", "*", "")
-  var <- c(0, 0.01, 0.05, 0.10, 1)
-  i <- findInterval(x, var, left.open = T, rightmost.closed = T)
-  stars[i]
-}
-
-dta_cor <-
-  rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  mutate(year = year + 1) |> 
-  left_join(pov_direct |> filter(type == "arop") |> select(id, year, pov)) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  filter(!is.na(pov)) |> 
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> 
-  # filter(str_detect(var, "x10")) |> 
-  select(id, year, type, pov, value, name) |> 
-  pivot_wider(names_from = name, values_from = value) |> 
-  datawizard::data_group(type) |>
-  correlation::correlation() |> 
-  as_tibble() |> 
-  filter(Parameter1 == "pov") |> 
-  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |> 
-  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |> 
-  select(Group, Variable = Parameter2, stats) |>
-  pivot_wider(names_from = Group, values_from = stats) |> 
-  arrange(Variable)
-
-dta_cor |> 
-  flextable() |>
-  FitFlextableToPage()
-
-
-
 
 ## For the univariate model, we only use a single year; here we use a loop to run multiple years one after the other
 # results data frame
@@ -292,6 +215,8 @@ for (i in singleyears){
                  MSE = TRUE, 
                  mse_type = "boot", B = c(200, 0))
   
+  bd_out |> pin_write(fh_model, name = paste0("fh_model_", i), type = "rds")
+  
   # Save results
   pov_fh_tmp <- as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
 
@@ -308,4 +233,57 @@ bd_out |>
   pin_write(x = pov_fh,
             name = "pov_fh_multipleyears",
             type = "rds")
-write.csv(pov_fh, "data/clean-example/pov_fh_multipleyears.csv")
+write.csv(pov_fh, "data/clean/pov_fh_multipleyears.csv")
+
+
+
+#### Post estimation analysis
+fh_model_2019 <- bd_out |> pin_read("fh_model_2019")
+fh_model_2020 <- bd_out |> pin_read("fh_model_2020")
+fh_model_2021 <- bd_out |> pin_read("fh_model_2021")
+fh_model_2022 <- bd_out |> pin_read("fh_model_2022")
+fh_model_2023 <- bd_out |> pin_read("fh_model_2023")
+
+for (i in singleyears){
+  pdf(paste0("Plots-", i ,".pdf"))
+ # summary(eval(parse(text = paste0("fh_model_",i))))
+  plot(eval(parse(text = paste0("fh_model_",i))))
+ # compare_plot(val(parse(text = paste0("fh_model_",i))), MSE = TRUE, CV = TRUE)
+ # compare(eval(paste0("fh_model_",i)))
+  dev.off()
+}
+
+for (i in singleyears){
+  pdf(paste0("Compare-plots-", i ,".pdf"))
+  # summary(eval(parse(text = paste0("fh_model_",i))))
+  #plot(eval(parse(text = paste0("fh_model_",i))))
+   compare_plot(eval(parse(text = paste0("fh_model_",i))), MSE = TRUE, CV = TRUE)
+  # compare(eval(paste0("fh_model_",i)))
+  dev.off()
+}
+
+
+summary(fh_model_2019)
+plot(fh_model_2019)
+compare_plot(fh_model_2019, MSE = TRUE, CV = TRUE)
+compare(fh_model_2019)
+
+summary(fh_model_2020)
+plot(fh_model_2020)
+compare_plot(fh_model_2020, MSE = TRUE, CV = TRUE)
+compare(fh_model_2020)
+
+summary(fh_model_2021)
+plot(fh_model_2021)
+compare_plot(fh_model_2021, MSE = TRUE, CV = TRUE)
+compare(fh_model_2021)
+
+summary(fh_model_2022)
+plot(fh_model_2022)
+compare_plot(fh_model_2022, MSE = TRUE, CV = TRUE)
+compare(fh_model_2022)
+
+summary(fh_model_2023)
+plot(fh_model_2023)
+compare_plot(fh_model_2023, MSE = TRUE, CV = TRUE)
+compare(fh_model_2023)

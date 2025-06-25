@@ -158,7 +158,7 @@ Right hand side (RHS) variables i.e. indicators representative at the level of t
 
 -   Data present in the wide format, where each column represents an individual variable and row and observation for one area and one year. Stecifically columns are:
 
-    -   `id` regional identifier used to match RHS variables with regions and poverty estiamtes
+    -   `id` regional identifier used to match RHS variables with regions and poverty estimates
 
     -   `year` year for which observations are used.
 
@@ -166,7 +166,7 @@ Right hand side (RHS) variables i.e. indicators representative at the level of t
 
 -   Metadata table describes briefly each variable and provides a short, self-explaining name, used in regression tables.
 
-```{r dta-load-rhs}
+```{r dta-load-rhs, echo = FALSE}
 rhs_dta_0 <- 
   suppressMessages(file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
       readxl::read_excel()) 
@@ -221,16 +221,15 @@ geom_nuts3 <- geoms$level4 |> rename(subcode = id)
 geom_nuts2 <- geoms$level2
 ```
 
-Lastly, we define a set of key variables names used in the code below as well as the range of years, for which we estimate our poverty estimates. In some areas with a very small sample size, it may occur, that the individual data only consists of zeros and ones, resulting in a direct estimate of zero or one and a direct variance of zero. We set those areas to out-of-sample and for the final estimation results only the synthetic part of the FH model is used.
+Lastly, we define a set of key variables names used in the code below. 
 
 ```{r set-var-names}
 #| echo: true
-
 area_var <- c("id") 
 year_var <- "year"
 directpov <- "pov"
 directvar <- "vardir"
-year_set <- c(2019:2023)
+# year_set <- c(2019:2023)
 ## For the univariate model, we only use a single year
 singleyear <- "2019"
 
@@ -262,9 +261,9 @@ While computing the new variables, we need to make sure that we:
 
 -   record relevant metadata for them.
 
-@tbl-rhs-descr-stats provides the summary statistics for the RHS variables after we computed additional ones.
+@tbl-rhs-descr-stats provides the names for the RHS variables after we computed additional ones.
 
-```{r var-preparation}
+```{r var-preparation, include=FALSE}
 rhs_dta0 <- 
   rhs_dta |> 
   mutate(
@@ -342,7 +341,7 @@ rhs_meta_0 <- rhs_meta |> bind_rows(rhs_meta_extra)
 #   )
 ```
 
-```{r tbl-rhs-descr-stats}
+```{r tbl-rhs-descr-stats, echo = FALSE}
 #| tbl-cap: Descriptive statistics of the RHS variables
 rhs_dta0 |>
   pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
@@ -350,16 +349,11 @@ rhs_dta0 |>
   arrange(var_order) |>
   left_join(rhs_meta_0, by = join_by(var)) |>
   mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |>
-  datasummary(
-    formula = name  ~ value * (Mean + SD + Min + P50 + Max),
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
+  distinct(name) |>
+  flextable() |>
+  set_header_labels(name = "Label") |>
+  autofit() |>
+  fit_to_width(max_width = 6)
 ```
 
 After all variables are computed, we perform logarithm transformation of all continuous variables, where maximum is above 10, or difference between min and maximum exceeds 10 times.
@@ -379,76 +373,6 @@ rhs_dta1 <-
   ungroup()
 ```
 
-Descriptive statistics after transformation is:
-
-```{r tbl-rhs-descr-stats-trans}
-#| tbl-cap: Descriptive statistics of the RHS variables after transformation
-rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> #glimpse()
-  datasummary(
-    formula = name  ~ value * (Mean ) * type,
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
-```
-
-### Exploratory correlation analysis
-
-Before conducting the variable selection, we explore the correlations between our transformed variables and the poverty rates.
-
-```{r tbl-cor}
-#| tbl-cap: Correlatoin between poverty rates and key variables
-
-stars.pval <- function(x){
-  stars <- c("***", "**", "*", "")
-  var <- c(0, 0.01, 0.05, 0.10, 1)
-  i <- findInterval(x, var, left.open = T, rightmost.closed = T)
-  stars[i]
-}
-
-dta_cor <-
-  rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  mutate(year = year + 1) |> 
-  left_join(pov_direct |> filter(type == "arop") |> select(id, year, pov)) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  filter(!is.na(pov)) |> 
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> 
-  # filter(str_detect(var, "x10")) |> 
-  select(id, year, type, pov, value, name) |> 
-  pivot_wider(names_from = name, values_from = value) |> 
-  datawizard::data_group(type) |>
-  correlation::correlation() |> 
-  as_tibble() |> 
-  filter(Parameter1 == "pov") |> 
-  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |> 
-  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |> 
-  select(Group, Variable = Parameter2, stats) |>
-  pivot_wider(names_from = Group, values_from = stats) |> 
-  arrange(Variable)
-
-dta_cor |> 
-  flextable() |>
-  FitFlextableToPage()
-
-```
 
 ### Variable selection
 
@@ -505,15 +429,18 @@ fh_model <- fh(fixed = formula(fh_step$fixed),
                backtransformation = "bc",
                eff_smpsize = "n_eff", 
                MSE = TRUE, 
-               mse_type = "boot", B = c(200, 0)) 
+              mse_type = "boot", B = c(200, 0)) 
 
 bd_out |> pin_write(fh_model, type = "rds")
 
 ## In case, no transformation is desired, the call would like this:
-# fh_model <- fh(
-#   fixed = formula(fh_step$fixed),
-#   vardir = "vardir", combined_data = dta_ufh, domains = "id",
-#   method = "ml", MSE = TRUE) 
+#fh_model <- fh(
+#  fixed = formula(fh_step$fixed),
+#  vardir = "vardir", 
+#  combined_data = as.data.frame(dta_ufh), 
+#  domains = "id",
+#  method = "ml", 
+#  MSE = TRUE) 
 ```
 
 ## Assessment of the estimated model.
