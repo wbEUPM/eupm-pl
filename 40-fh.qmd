@@ -21,15 +21,36 @@ knitr::opts_chunk$set(
   error = FALSE
 )
 
-pak_list <- c("sf", "data.table", "tidyverse", "car", 
-              "sae", "survey", "spdep", "knitr", "MASS", "caret",
-              "caret", "purrr", "pins", "gt",  "scales",
-              "viridis", "emdi", "rlang")
-
-sapply(pak_list,
-       library,
-       character.only = TRUE)
-
+pacman::p_load(
+  sf, 
+  data.table, 
+  car, 
+  msae,
+  sae, 
+  survey, 
+  spdep,
+  knitr, 
+  MASS, 
+  caret,
+  purrr,
+  pins,
+  rlang,
+  emdi,
+  gt,
+  lmtest, 
+  scales,
+  viridis, 
+  patchwork,
+  dplyr, 
+  tictoc,
+  gt,
+  matrixcalc,
+  tidyverse,
+  modelsummary,
+  flextable,
+  correlation,
+  datawizard
+  )
 
 # Loading locally-developed
 list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
@@ -38,13 +59,13 @@ list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |>
 # Raw data root
 root_raw <- "./data/raw"
 root_temp <- "./data/temp"
-root_clean <- "./data/clean-example"
+root_clean <- "./data/clean"
 
 # Data-storage boards
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
-bd_out <- board_folder("data/clean-example", versioned = TRUE)
+bd_out <- "output/res-40-fh" |> board_folder(versioned = T)
 
 ```
 
@@ -52,7 +73,7 @@ bd_out <- board_folder("data/clean-example", versioned = TRUE)
 
 In this section, we will present a whole estimation procedure of the univariate area-level model introduced by @Fay1979 in R. As with the disclaimer in the preceding section, this practical manual is not intended to serve as a theoretical introduction to area-level models. Instead, it offers a set of straightforward and practical R scripts, accompanied by clear explanations, to demonstrate how these tasks can be carried out in R. For a theoretical foundation please refer to @Fay1979 and @RaoMolina2015. In addition to theoretical information, the vignette "A framework for producing small area estimates based on area-level models in R" of the R package `emdi` [@Harmening2023] provides further code examples for the FH model.
 
-In this chapter, we will describe how to run the univariate Fay-Herriot (FH) using simulated income data from Spain. The estimation procedure is explained step by step.
+The estimation procedure is explained step by step.
 
 Step 1: Data preparation. Compute the direct estimates and their corresponding variances on the area-level and eventually perform variance smoothing. Aggregate the available auxiliary variables to the same area level and combine both input data.
 
@@ -80,245 +101,305 @@ We will show below the use of the `fh()` function of the R package `emdi` [@Harm
 
 Usually, SAE combines multiple data sources: a survey data set and a census or administrative/register dataset. For the estimation of area-level models, we need area-level aggregates of the same area-level (e.g. NUTS3) of both datasets. The target variable (typically household welfare/income for poverty mapping) is available in the survey but not in the census data.
 
-In this example, we use a synthetic data set adapted from R package `sae` called `incomedata`. The original data contains information for $n = 17,119$ fictitious individuals residing across $D = 52$ Spanish provinces. The variables include the name of the province of residence (`provlab`), province code (`prov`), as well as several correlates of income.
+To ensure transparent data organization, we adopt a standard structure of the poverty estimates data produced in our analysis. Specifically, each estimation method produces data set of the following structure (@tbl-data-str).
 
-For this exercise, we use a random 10% sample of the `incomedata` to estimate the poverty rates. For the univariate case, we use the income variable from 2012.
-
-The FH estimation process relies on 3 types of data:
-
-(1) The data containing the outcome variable from which direct estimates will be computed. This is a usually a survey dataset for each year of data including outcome variable (such as income or welfare aggregates), weights, cluster identifiers (i.e. if available, psu or enumeration areas) at the unit level i.e. individual or household. In this example, we call this: `survey_dt`.
-
-(2) A dataset containing for the right hand side (RHS) variables i.e. indicator estimates representative at the level of the target area. This is often obtained from administrative data sources or geospatial data such as remotely sensed high resolution data. The final RHS dataset ought to include an area id and variables of interest. In this example, we call this `rhs_dt`.
-
-(3) Finally, a shapefile which spatially links each target area to their boundaries on a map. This will contain the area id as well as the geometry object which when visualized will show the shape of the areas in which poverty rates will be estimated. In this example, we call this `shp_dt`.
-
-```{r load-data, message = FALSE, warning = FALSE}
-
-### lets read in our 3 aforementioned datasets 
-
-survey_dt <- 
-  bd_clean |>
-  pin_read("pov_direct")
-
-
-rhs_dt <- 
-  bd_clean |>
-  pin_read("sae_data")
-  
-
-shp_dt <- 
-  bd_clean |>
-  pin_read("geometries")
-
-
+```{r echo=FALSE}
+#| label: tbl-data-str
+#| tbl-cap: Structure of the data resulting form UFH and other poverty estimates
+tribble(
+  ~Variable, ~Description,
+  "id", "Region ID",
+  "year", "Year",
+  "estimate", "Estimate type, e.g. UFH, MFH1, MHF2, MFH3, direct, etc.",
+  "type", "Poverty measure type (dependent variabel), e.g. AROP, AROPE, AROP anchored, AROP real.",
+  "pov", "Estimates of poverty",
+  "SE", "Standard errors of the direct estimates",
+  "vardir", "Variance (SE^2)",
+  "CV", "Coefficient of variation (SE/pov)",
+   "var_SRS", "Variance under simple random sampling",
+   "deff", "Desgin effect: ratio of the variance considering the sampling design (vardir) to var_SRS",
+   "n_eff", "Sample size of each area divided by the design effect (deff)",
+  "(v_pov20XX", "Covariance between poverty in current year versus year 20XX (multiple columns))"
+) |> 
+  flextable() |> FitFlextableToPage()
 ```
 
-Below is what our datasets look like. These are generally the variables
+For this example, we use actual data for Poland for 2019.
 
-```{r}
+-   Direct estimates are prepared based on the confidential SILC data in the script `10-direct-estimates.qmd`.
 
-survey_dt |>
-  glimpse()
+-   Right-hand-side variables, are prepared by the NSO using the [API](https://api.stat.gov.pl/Home/BdlApi) to their sub-national data base accessible through the R package [`bdl`](https://cran.r-project.org/package=bdl), see the script `20-other-variables.qmd`.
 
+-   Sub-national geometries are available with the [`bdl`](https://cran.r-project.org/package=bdl) package and are prepared in `05-geometries.qmd`.
+
+**Note:** since we have multiple different types of poverty estimates, e.g. AROP, AROPE, AROP anchored, etc. we recommend creating separate scripts for preparing variable-specific poverty maps. This tutorial focuses exclusively on AROP poverty estimate.
+
+
+The FH estimation process relies on 3 types of data: direct estimates, right hand side variables and subnational geometries.
+
+
+### Direct estimates
+
+Direct estimates of poverty and its variance, `pov_direct`. Its is structure as outlined in @tbl-data-str. Below we presents the structure of this data set.
+
+```{r dta-load-direct}
+pov_direct <- bd_clean |> pin_read("pov_direct") |> 
+  rename(id = subcode) |> filter(type == "arop") |> 
+  mutate(estimate = "Direct")
 ```
 
-`survey_dt` contains our target area identifiers (`provlab`, `prov`), the weight variable `weight`, the cluster id i.e. enumeration area or psu, `ea_id`, the year, `year`, the income variable `income` and the poverty line `poverty`. In this example, `survey_dt` of class `data.frame` is at the level of the individual. It could also be at the level of the household if poverty lines are evaluated at that level.
-
-```{r}
-
-rhs_dt |>
-  glimpse()
-
+```{r dta-str-pov-direct}
+pov_direct |> glimpse()
 ```
 
-\``rhs_dt` is an object of class `data.frame` created at the level of the target area. It should contain the same target area identifiers as in `survey_dt` and the year variable `year`.
+### Right hand side variables
 
-```{r}
+Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each area consist of two components:
 
-shp_dt |>
-  glimpse()
+-   Data present in the wide format, where each column represents an individual variable and row and observation for one area and one year. Stecifically columns are:
 
+    -   `id` regional identifier used to match RHS variables with regions and poverty estimates
+
+    -   `year` year for which observations are used.
+
+    -   `x1`, `x2`, `x3`, ..., `xn` are the RHS variables described in the metadata.
+
+-   Metadata table describes briefly each variable and provides a short, self-explaining name, used in regression tables.
+
+```{r dta-load-rhs, echo = FALSE}
+rhs_dta_0 <- 
+  suppressMessages(file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
+      readxl::read_excel()) 
+
+new_names <- 
+  rhs_dta_0 |> slice(1) |> t() |> as.data.frame() |>
+  rownames_to_column() |> as_tibble() |> 
+  mutate(rowname = ifelse(str_detect(rowname, "\\.{2,}"), NA_character_, rowname)) |> 
+  fill(rowname) |> 
+  mutate(rowname = str_to_lower(rowname),
+         rowname = ifelse(!is.na(V1), str_c(rowname,"__", V1), rowname)) |> 
+  pull(rowname)
+
+rhs_dta <- 
+  rhs_dta_0 |> 
+  slice(-1) |> 
+  (\(x){colnames(x) <- new_names; x})() |> 
+  select(-no., -subregion) |> 
+  pivot_longer(
+    cols = matches("\\d{4}"), 
+    values_transform = \(x) suppressWarnings(as.numeric(x))
+    ) |> 
+  filter(!is.na(value)) |> 
+  separate(name, into = c("var", "year")) |> 
+  mutate(year = as.numeric(year)) |> 
+  pivot_wider(names_from = "var", values_from = "value")
+
+
+rhs_meta <-
+  file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
+  readxl::read_excel(sheet = 2) |> 
+  select(var = Variable,
+         category = `Category of variable`,
+         name = `Variable (in English)`) |> 
+  mutate(var = str_to_lower(var))
 ```
 
-`shp_dt` is an object of class `sf`, `data.frame` created at the level of the target area. This is the shapefile for the area of interest for which the poverty map will be estimated. It should contain the same target area ID found in `survey_dt` as well as `rhs_dt`.
-
-A quick summary table on the data needs for the UFH model:
-
-```{r, echo = FALSE}
-
-# Create the table content
-fh_table <- tibble::tibble(
-  Dataset = c("`survey_dt`", "`rhs_dt`", "`shp_dt`"),
-  `Unit of Observation` = c(
-    "Individual (or Household)",
-    "Target Area (e.g. Province)",
-    "Target Area (Spatial)"
-  ),
-  `Required Variables` = c(
-    "`target area identifiers`, `weights`, `cluster identifier`, `income/welfare variable`, `poverty line`",
-    "`target area identifiers`, `covariates` (e.g. `gen`, `educ1`, `schyrs`, etc.)",
-    "`target area identifiers`, `geometries` (e.g. `geometry` column from `sf`)"
-  )
-)
-
-
-# Build the gt table
-fh_table %>%
- gt() %>%
-  tab_header(
-    title = md("**Data Input Checklist for the Univariate Fay-Herriot Model**"),
-    subtitle = md("*Datasets, levels, and Required variables*")
-  ) %>%
-  cols_label(
-    Dataset = "Dataset Name",
-    `Unit of Observation` = "Unit of Observation",
-    `Required Variables` = "Required Variables"
-  ) %>%
-  tab_options(
-    table.font.names = "Arial",
-    heading.title.font.size = 16,
-    heading.subtitle.font.size = 12,
-    table.font.size = 12,
-    column_labels.font.weight = "bold",
-    data_row.padding = px(4),
-    table.border.top.width = px(2),
-    table.border.bottom.width = px(2),
-    heading.align = "left"
-  ) %>%
-  fmt_markdown(columns = everything())
-
+```{r dta-str-rhs}
+#| echo: true
+rhs_dta |> select(1:10) |> glimpse()
+rhs_meta |> glimpse()
 ```
 
-### Direct estimation
+### Geo-spatial boundaries
 
-We will use the direct Horvitz-Thompons estimators that use the survey weights in `weight` variable. We calculate the sample sizes for each provinces and compute the direct estimates and their variances. We use the `direct` function of the `emdi` package here. Other options are e.g. the `direct` function of package `sae` [@molina2015r] or the `svyby` command of package `survey` [@Lumley2024]. Then, we create a dataframe containing the direct estimate, the standard errors, the variances, the coefficient of variation and the design effects, that are needed for the arcsin transformation. The design effect is the ratio of the variance considering the sampling design to the variance estimated under simple random sampling. For detailled information about the arcsin transformation please refer to @Casas2016 and @Schmid2017. In some areas with a very small sample size, it may occur, that the individual data only consists of zeros and ones, resulting in a direct estimate of zero or one and a direct variance of zero. We set those areas to out-of-sample and for the final estimation results only the synthetic part of the FH model is used.
+Geo-spatial boundaries of each target area are loaded. We use NUTS2 and NUTS3 boundaries for plotting. Column `id` is used to map polygons to areas.
 
-```{r direct, message = FALSE, warning = FALSE}
-### a little bit of housekeeping to ensure ease of access 
-area_vars <- c("prov", "provlab") ### both variables are at the same level. If the levels vary, you would need to combine both variables for effect use
+```{r dta-load-gis}
+#| echo: false
+geoms <-  bd_clean |> pin_read("geometries")
+geom_nuts3 <- geoms$level4 |> rename(subcode = id)
+geom_nuts2 <- geoms$level2
+```
 
-cluster_var <- "ea_id"
+Lastly, we define a set of key variables names used in the code below. 
 
-weight_var <- "weight"
-
+```{r set-var-names}
+#| echo: true
+area_var <- c("id") 
 year_var <- "year"
-
-outcome_var <- "income"
-
-povline_var <- "povline"
-
-candidate_vars <- colnames(rhs_dt)[!colnames(rhs_dt) %in% c(area_vars, year_var)]
-
-## For the univariate model, we only use a single year (here 2012)
-singleyear <- "2012"
-
-survey_dt <- survey_dt |>
-  filter(year == singleyear)
-
-rhs_dt <- rhs_dt |>
-  filter(year == singleyear)
-
-
-## calculate sample size for each province
-sampsize_dt <- 
-survey_dt |>
-  group_by(!!!syms(area_vars[1])) |>
-  summarize(N = n())
-
-## computation of direct estimates and their variances (the poverty line is already included within the data)
-## creating the poverty indicator
-survey_dt <- 
-  survey_dt |>
-  mutate(pov_indicator = ifelse(income < povline, 1, 0))
-
-
-### creating a survey object
-design_obj <- survey::svydesign(ids = eval(expr(~!!sym(cluster_var))), 
-                                weights = eval(expr(~!!sym(weight_var))), 
-                                data = survey_dt)
-
-var_dt <- survey::svyby(~pov_indicator, by=eval(expr(~!!sym(area_vars[1]))), design = design_obj, FUN = survey::svymean)
-
-
-direct_dt <- 
-  var_dt |>
-  rename(direct_povrate = "pov_indicator") |>
-  rename(SD = "se") |>
-  mutate(vardir = SD^2) |>
-  mutate(CV = SD / direct_povrate) |>
-  merge(sampsize_dt, 
-        by = area_vars[[1]]) |>
-  mutate(var_SRS = direct_povrate * (1 - direct_povrate) / N) |>
-  mutate(deff = vardir / var_SRS) |>
-  mutate(n_eff = N/deff)
-
-## set zero variance to OOS
-direct_dt <- direct_dt[complete.cases(direct_dt), ]
+directpov <- "pov"
+directvar <- "vardir"
+# year_set <- c(2019:2023)
+## For the univariate model, we only use a single year
+singleyear <- "2019"
 
 ```
 
-Here is what the results look like:
-
-```{r}
-
-head(direct_dt)
-
-```
-
-### Variance smoothing
-
-A quick inspection of the preceding results will show some provinces contain low sample sizes which sometimes result in extreme value poverty rates and hence 0 variance. To avoid this, we will show you how to apply the variance smoothing method suggested by @you2023application. Please see the code and Roxygen comments below explaining the use of the `varsmoothie_king()` function which computes smoothed variances. In case, the arcsin transformation will be applied, the variance smoothing described here is not necessary, since the arcsin transformation works variance stabilizing itself. When applying the arcsin transformation, the direct variances are automatically set to 1/(4\*effective sampling size) when using the `fh` function of package `emdi`. The effective sample size equals the sample size of each area divided by the design effect. If the variance stabilizing effect is not enough, the design effect of a higher area level could also be used here (in this example the regions `ac`).
-
-The goal now is to use the `varsmoothie_king()` function to add an additional column of smoothed variances into our `direct_dt` dataframe. Required inputs: a vector of unique domains, the raw variances estimated from sample data and the sample size for each domain.
-
-```{r}
-var_smooth <- varsmoothie_king(domain = direct_dt[[area_vars[1]]],
-                               direct_var = direct_dt$vardir,
-                               sampsize = direct_dt$N)
-
-direct_dt <- var_smooth |> merge(direct_dt, by.x = "Domain",
-        by.y = area_vars[1])
-
-# Replace the variances that are zero with their smoothed counterparts
-direct_dt <- 
-  direct_dt |>
-  mutate(across(
-    starts_with("v_"),
-    ~ if_else(abs(.x) <= 1e-4, get(paste0("vsv", str_remove(cur_column(), "^v"))), .x),
-    .names = "{.col}"
-  ))
-```
-
-Thus far, we have careful set up the types of data we require for the FH model. We only need to combine the dataframe containing the direct estimates and their variances with the auxiliary variables.
-
-```{r}
-fh_dt <- merge(direct_dt, rhs_dt,
-    by.x = "Domain", by.y = area_vars[[1]],
-    all = TRUE)
-
-```
 
 ## Model selection
 
-### Model preparation
+### Variables preparation
 
-FH does not run if there is any missing value in the auxiliary variables, and therefore, any variable with missing value should be removed in advance.
+At this step we prepared in the exact form that enables its use in the `fh` function. This includes:
 
-```{r fh_model, message = FALSE, warning = FALSE}
-rowsNAcovariates <- rowSums(sapply(fh_dt[,..candidate_vars], is.na))
-fh_dt <- fh_dt[rowsNAcovariates == 0, ]
+-   Dependent variable preparation in the wide format with year-specific poverty rates as columns and regions as rows. `id` column is used as a regional identifier.
+
+-   RHS variables preparation and reshaping:
+
+    -   Computing economically sound ratios, constructing complex variables and performing linear transformation
+
+    -   Reshaping data to the wide format with variables names and years in columns and regions identified by `id` variable in rows.
+
+-   RHS variables selection that maximize the predictive power.
+
+
+#### RHS variables preparation
+
+While computing the new variables, we need to make sure that we:
+
+-   name them uniquely and appropriately;
+
+-   record relevant metadata for them.
+
+@tbl-rhs-descr-stats provides the names for the RHS variables after we computed additional ones.
+
+```{r var-preparation, include=FALSE}
+rhs_dta0 <- 
+  rhs_dta |> 
+  mutate(
+    x101 = x4 / x3, # Share of Working Age pop in the region,
+    x102 = x6 / (x3 / x42),
+    x103 = x7 / (x3 / x42),
+    x104 = x8 / (x3 / x42),
+    x105 = x9 / (x3/10000),
+    x106 = x12 / (x3 / x42),
+    x118 = x12 / (x3 / x42),
+    x107 = x14 / (x3 / x42),
+    x108 = x23 / (x3/10000),
+    x109 = x41 /  (x3/10000),
+    x110 = x40 /  (x3/x42),
+    x111 = x22 /  (x3/x42),
+    x112 = x17 /  (x12),
+    x113 = x18 /  (x12),
+    x114 = x19 /  (x12),
+    x115 = x13 /  (x12),
+    x116 = x1 /  (x3 / 1000),
+    x117 = x2 /  (x3 / 1000),
+    x119 = x29 /  (x4 / 1000),
+    x120 = x30 /  (x4 / 1000)
+  ) |> 
+  select(#-x1, -x2, -x3, 
+         -x6, -x7, -x8, -x12, -x13,
+         -x17, -x18, -x19, -x31, -x33)
+
+rhs_meta_extra <- 
+  tribble(
+    ~var, ~name,
+    "x101", "Workage pop share",
+    "x102", "Sahre fam. poverty ben.",
+    "x103", "Sahre fam. homelessness ben.",
+    "x104", "Sahre fam. unemployment ben.",
+    "x105", "Market places per 10000 person",
+    "x106", "Dwelling appartment per family",
+    "x107", "Dwelling alowance per family",
+    "x108", "Pharmacies per 10000 person",
+    "x109", "Care facil. resid. per 10000 person",
+    "x110", "Childrent 0-3 per family",
+    "x111", "Share of families with Large Fam Card",
+    "x112", "Water, share dwel.",
+    "x113", "Heating, share dwel.",
+    "x114", "Gas, share dwel.",
+    "x115", "Rooms per apt.",
+    "x116", "Birth rate per 1000",
+    "x117", "Deth rate per 1000",
+    "x118", "Dwelling rooms per family",
+    "x119", "Immigrants per 1000 working pop",
+    "x120", "Emmigrants per 1000 working pop"
+  )
+
+rhs_meta_0 <- rhs_meta |> bind_rows(rhs_meta_extra)
+
+# # Identify the columns of interest
+# x_vars <- mfh_dt0 |> select(matches("^X\\d+y\\d+")) |> names()
+# x_vars_numeric <- x_vars[sapply(mfh_dt0[x_vars], is.numeric)]
+# 
+# # Function to min-max scale
+# min_max_scale <- function(x) {
+#   rng <- range(x, na.rm = TRUE)
+#   (x - rng[1]) / (rng[2] - rng[1])
+# }
+# 
+# # Mutate log and scaled versions
+# mfh_dt <-
+#   mfh_dt0 %>%
+#   mutate(
+#     # Add log-transformed columns
+#     across(all_of(x_vars_numeric), .fns = ~ log1p(.), .names = "log{.col}"),
+#     
+#     # Add min-max scaled columns
+#     across(all_of(x_vars_numeric), .fns = ~ min_max_scale(.), .names = "scaled{.col}")
+#   )
 ```
 
-### Check multicollinearity
+```{r tbl-rhs-descr-stats, echo = FALSE}
+#| tbl-cap: Descriptive statistics of the RHS variables
+rhs_dta0 |>
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
+  arrange(var_order) |>
+  left_join(rhs_meta_0, by = join_by(var)) |>
+  mutate(name = str_c(var, " ", name) |> as_factor()) |>
+  distinct(name) |>
+  flextable() |>
+  set_header_labels(name = "Label") |>
+  autofit() |>
+  fit_to_width(max_width = 6)
+```
+
+After all variables are computed, we perform logarithm transformation of all continuous variables, where maximum is above 10, or difference between min and maximum exceeds 10 times.
+
+```{r}
+var_to_log <- 
+  rhs_dta0 |>
+  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
+  group_by(year, var) |> 
+  summarise(min = min(value), max = max(value)) |> 
+  filter(min * 10 < max & max > 10 | max > 100) |> pull(var) |> unique()
+
+rhs_dta1 <- 
+  rhs_dta0 |>
+  group_by(year) |>
+  mutate(across(all_of(var_to_log), ~ log(.))) |> 
+  ungroup()
+```
+
+
+### Variable selection
+
 
 With the help of the `step()` function of package `emdi`, we perform a variable selection based on the chosen variable selection criterion and directly get the model with fewer variables. The function `step_wrapper()` implemented below is a wrapper to the `emdi::step()` function and performs all the perfunctory cleaning necessary to use `step()`. This includes dropping columns that are entirely missing (`NA`) and keep only complete cases/observations (for the model selection only the in-sample domains are used) and remove perfectly or near collinear variables and combinations.
 
 We apply the function to select the variables. Required inputs: data set, character vector containing the set of auxiliary variables, name of y variable, a correlation threshold between 0 and 1, name of information criterion and name of direct variance variable. In case, a transformation should be applied, "arcsin" as transformation and name of variable that contains the effective sample size.
 
 ```{r remove_multicol, message = FALSE, warning = FALSE, results = "hide"}
-fh_step <- step_wrapper_fh(dt = fh_dt,
+## For the univariate model, we only use a single year
+pov_direct_year <- pov_direct |>
+  filter(year == singleyear)
+
+rhs_dta1_year <- rhs_dta1 |>
+  filter(year == as.character(as.numeric(singleyear) - 1))
+
+## We merge the direct data to the rhs data. FH does not run if there is any missing value in the auxiliary variables, and therefore, any variable with missing value should be removed in advance.
+dta_ufh <-
+  rhs_dta1_year |> 
+  left_join(pov_direct_year, by = join_by(!!area_var)) |> 
+  select(-where(~any(is.na(.))))
+
+candidate_vars <- dta_ufh |> select(contains("x")) |> names()
+
+fh_step <- step_wrapper_fh(dt = dta_ufh,
                            xvars = candidate_vars,
-                           y = "direct_povrate",
+                           y = "pov",
                            cor_thresh = 0.7,
                            criteria = "BIC",
                            vardir = "vardir", 
@@ -334,26 +415,32 @@ print(fh_step$fixed)
 
 ## Model estimation of FH point and their MSE estimates.
 
-In this example, we use the function `fh` to calculate the FH estimates. Because we want to estimate a ratio, we need to apply the arcsin transformation to guarantee that the results lie between 0 and 1. For that, we choose "arcsin" as `transformation`, and a bias-corrected `backtransformation` ("bc"). Additionally, the effective sample size, which equals the sample size of each area divided by the design effect, is needed for the arcsin transformation. We set the `MSE` estimation to `TRUE`, the `mse_type` to "boot" (necessary for the type of transformation) and determine the number of bootstrap iterations. For practical applications, values larger than 200 are recommended. In case, no transformation is desired, the `transformation` argument must be set to "no" and the inputs `backtransformation` and `eff_smpsize` are no longer needed.
+In this example, we use the function `fh` to calculate the FH estimates. Because we want to estimate a ratio, we need to apply the arcsin transformation to guarantee that the results lie between 0 and 1 [@Casas2016, @Schmid2017]. The arcsin transformation works variance stabilizing itself. When applying the arcsin transformation, the direct variances are automatically set to 1/(4\*effective sampling size) when using the `fh` function of package `emdi`. (If the variance stabilizing effect is not enough, the design effect of a higher area level could also be used here.) We choose "arcsin" as `transformation`, and a bias-corrected `backtransformation` ("bc"). Additionally, the effective sample size, which equals the sample size of each area divided by the design effect, is needed for the arcsin transformation. We set the `MSE` estimation to `TRUE`, the `mse_type` to "boot" (necessary for the type of transformation) and determine the number of bootstrap iterations. For practical applications, values larger than 200 are recommended. In case, no transformation is desired, the `transformation` argument must be set to "no" and the inputs `backtransformation` and `eff_smpsize` are no longer needed.
+
 
 ```{r model_est, message = FALSE, warning = FALSE}
 set.seed(123)
 fh_model <- fh(fixed = formula(fh_step$fixed),
                vardir = "vardir", 
-               combined_data = fh_dt, 
-               domains = "Domain",
+               combined_data = as.data.frame(dta_ufh), 
+               domains = "id",
                method = "ml", 
                transformation = "arcsin", 
                backtransformation = "bc",
                eff_smpsize = "n_eff", 
                MSE = TRUE, 
-               mse_type = "boot", B = c(200, 0)) 
+              mse_type = "boot", B = c(200, 0)) 
+
+bd_out |> pin_write(fh_model, type = "rds")
 
 ## In case, no transformation is desired, the call would like this:
-# fh_model <- fh(
-#   fixed = Direct ~ age2 + age3 + age4 + age5 + educ1 + ntl + schyrs, #formula(fh_step$fixed),
-#   vardir = "vardir", combined_data = comb_Data, domains = "Domain",
-#   method = "ml", MSE = TRUE) 
+#fh_model <- fh(
+#  fixed = formula(fh_step$fixed),
+#  vardir = "vardir", 
+#  combined_data = as.data.frame(dta_ufh), 
+#  domains = "id",
+#  method = "ml", 
+#  MSE = TRUE) 
 ```
 
 ## Assessment of the estimated model.
@@ -364,7 +451,7 @@ With the help of the `summary` method of `emdi`, we gain detailed insights into 
 summary(fh_model)
 ```
 
-We can see, that 49 domains are in-sample domains. The 3 out-of-sample domains belong to the domains with 0 direct and variance estimates that we set to `NA` in the beginning. The variance of the random effects equals 0.001516632. All of the included auxiliary variables are significant on a 0.05 significance level and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.74. The results of the Shapiro-Wilk-test indicate that normality is not rejected for the standardized residuals.
+We can see, that all domains are in-sample domains. The variance of the random effects equals 0.0008613493. All of the included auxiliary variables are significant and their explanatory power is large with an adjusted $R^2$ (for FH models) of around 0.73. The results of the Shapiro-Wilk-test indicate that normality is not rejected for both error terms.
 
 ### Diagnostic plots
 
@@ -374,7 +461,7 @@ We produce normal quantile-quantile (Q-Q) plots of the standardized realized res
 plot(fh_model)
 ```
 
-The plots show slight deviations of the distributions from normality. The normality assumption is not required for the computation of the FH estimates, but at the obtained MSE estimates we have to look with some care when the normality assumption does not hold.
+The plots show slight deviations of the distributions from normality. Together with the results of the Shapiro-Wilk test, we can state that normality is not rejected for both error terms.
 
 ## Comparison of the FH results with the direct estimates.
 
@@ -388,7 +475,7 @@ compare(fh_model)
 
 ```
 
-The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.66) between the direct and FH estimates.
+The direct estimates are tracked by most of the FH estimates within the line plot. The precision of the direct estimates could be improved by the usage of the FH model in terms of MSEs and CVs. The null hypothesis of the Brown test is not rejected and the correlation coefficient indicates a positive correlation (0.72) between the direct and FH estimates.
 
 If the result of the model assessment is not satisfactory, the following should be checked again: Can the direct estimation including variance estimation be improved? Are there further auxiliary variables and/or must possible interaction effects be taken into account? Does a (different) transformation need to be used?
 
@@ -398,17 +485,15 @@ Benchmarking is based on the principle that aggregated FH estimates should sum u
 
 ```{r benchmarking, message = FALSE, warning = FALSE}
 ## compute the benchmark value (mean of poverty indicator for the whole country)
-benchmark_value <- weighted.mean(survey_dt$pov_indicator, survey_dt[[weight_var]])
+benchmark_value <- mean(dta_ufh$pov)
 
 ## compute the share of population size in the total population size (N_d/N) per area
-data("sizeprov")
-fh_dt <- fh_dt |>
-  left_join(sizeprov |>
-  mutate(ratio_n = Nd/sum(Nd)), by = c("Domain" = area_vars[1]))
+dta_ufh <- dta_ufh |>
+  mutate(ratio_n = N_pop/sum(N_pop))
 
 fh_bench <- benchmark(fh_model,
                       benchmark = benchmark_value,
-                      share = fh_dt$ratio_n, 
+                      share = dta_ufh$ratio_n, 
                       type = "ratio",
                       overwrite = TRUE)
 head(fh_bench$ind)
@@ -423,7 +508,7 @@ pov_fh <- as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
 head(pov_fh)
 
 pov_fh <- pov_fh |>
-  rename(!!area_vars[1] := "Domain") |>
+  rename(!!area_var := "Domain") |>
   mutate(year = singleyear)
 
 bd_out |>
@@ -431,7 +516,7 @@ bd_out |>
             name = "pov_fh",
             type = "rds")
 
-write.csv(pov_fh, "data/clean-example/pov_fh.csv")
+write.csv(pov_fh, "data/clean/pov_fh.csv")
 ```
 
 ### Poverty map
@@ -441,20 +526,20 @@ With the help of geographical maps, the results can be presented in a user-frien
 ```{r fig-povmap, message = FALSE}
 ## Create a suitable mapping table
 ## Find the right order
-domain_ord <- match(shp_dt[[area_vars[1]]], fh_model$ind$Domain)
+domain_ord <- match(geom_nuts3$subcode, fh_model$ind$Domain)
 
 ## Create the mapping table based on the order obtained above
 map_tab <- data.frame(pop_data_id = fh_model$ind$Domain[domain_ord],
-                      shape_id = shp_dt[[area_vars[1]]])
+                      shape_id = geom_nuts3$subcode)
 
 ## Create map
-map_plot(object = fh_model, MSE = TRUE, map_obj = shp_dt,
- map_dom_id = area_vars[1], map_tab = map_tab)
+map_plot(object = fh_model, MSE = TRUE, map_obj = geom_nuts3,
+ map_dom_id = "subcode", map_tab = map_tab)
 
 ```
 
 ## Saving the results.
 
-Either by using `save.image("fh_estimation.RData")` or export of the model output and estimation results to Excel or OpenDocument spreadsheet (ODS) `write.excel(fh_model, file = "fh_model_output.xlsx", MSE = TRUE, CV = TRUE`.
+Either by using `save.image("fh_estimation.RData")` or export of the model output and estimation results to Excel or OpenDocument spreadsheet (ODS) `write.excel(fh_model, file = "fh_model_output.xlsx", MSE = TRUE, CV = TRUE`).
 
 ## References
