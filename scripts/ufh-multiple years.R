@@ -47,12 +47,11 @@ bd_clean <- root_clean |> board_folder(versioned = T)
 bd_out <- "output/res-40-fh" |> board_folder(versioned = T)
 
 
-## Data
+## Data loading -------------------------------------------------------------
 
 # Direct
 pov_direct <- bd_clean |> pin_read("pov_direct") |> 
-  rename(id = subcode) |> filter(type == "arop") |> 
-  mutate(estimate = "Direct")
+  rename(id = subcode) |> mutate(estimate = "Direct")
 
 
 ## Specify the variable names
@@ -178,15 +177,17 @@ pov_fh <- data.frame(matrix(ncol = 8, nrow = 0))
 colnames(pov_fh) <- c(area_var, "Direct", "Direct_MSE", "Direct_CV", "FH", "FH_MSE", "FH_CV", "year")
 
 singleyears <- as.character(year_set)
+
+for (type_poverty in unique(pov_direct$type)) {
+  # type_poverty <- "arop"
 for (i in singleyears){
-  survey_dt_tmp <- pov_direct |>
-    filter(year == i)
+  survey_dt_tmp <- pov_direct |> filter(year == i, type == type_poverty)
   
-  rhs_dt_tmp <- rhs_dta1  |>
-    filter(year == as.character(as.numeric(i) - 1))
+  rhs_dt_tmp <- rhs_dta1  |> filter(year == as.character(as.numeric(i) - 1))
   
   dta_ufh <-
     rhs_dt_tmp |> 
+    select(-year) |> 
     left_join(survey_dt_tmp, by = join_by(!!area_var)) |> 
     select(-where(~any(is.na(.))))
   
@@ -215,34 +216,36 @@ for (i in singleyears){
                  MSE = TRUE, 
                  mse_type = "boot", B = c(200, 0))
   
-  bd_out |> pin_write(fh_model, name = paste0("fh_model_", i), type = "rds")
+  bd_aux |> pin_write(fh_model, 
+                      name = paste0("fh_model__", type_poverty, "__", i),
+                      type = "rds")
   
   # Save results
-  pov_fh_tmp <- as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
-
-  pov_fh_tmp <- pov_fh_tmp |>
-    rename(!!area_var[1] := "Domain") |>
-    mutate(year = i)
+  pov_fh_tmp <- 
+    as_tibble(estimators(fh_model, MSE = TRUE, CV = TRUE)) |> 
+    select(!!area_var := Domain, pov = FH, MSE = FH_MSE, CV = FH_CV) |>
+    mutate(year = i, estimate = "UFH", type = type_poverty)
   
   pov_fh <- rbind(pov_fh, pov_fh_tmp)
   
 }
+}
 
-
-bd_out |>
+bd_clean |>
   pin_write(x = pov_fh,
             name = "pov_fh_multipleyears",
             type = "rds")
-write.csv(pov_fh, "data/clean/pov_fh_multipleyears.csv")
 
+
+# Selected Diagnosis ------------------------------------------------------
 
 
 #### Post estimation analysis
-fh_model_2019 <- bd_out |> pin_read("fh_model_2019")
-fh_model_2020 <- bd_out |> pin_read("fh_model_2020")
-fh_model_2021 <- bd_out |> pin_read("fh_model_2021")
-fh_model_2022 <- bd_out |> pin_read("fh_model_2022")
-fh_model_2023 <- bd_out |> pin_read("fh_model_2023")
+fh_model_2019 <- bd_out |> pin_read("fh_model__arop__2019")
+fh_model_2020 <- bd_out |> pin_read("fh_model__arop__2020")
+fh_model_2021 <- bd_out |> pin_read("fh_model__arop__2021")
+fh_model_2022 <- bd_out |> pin_read("fh_model__arop__2022")
+fh_model_2023 <- bd_out |> pin_read("fh_model__arop__2023")
 
 for (i in singleyears){
   pdf(paste0("Plots-", i ,".pdf"))

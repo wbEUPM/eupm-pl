@@ -4,6 +4,8 @@ author: "Sylvia Harmening"
 format: html
 editor: visual
 bibliography: references.bib
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
@@ -232,7 +234,6 @@ directvar <- "vardir"
 # year_set <- c(2019:2023)
 ## For the univariate model, we only use a single year
 singleyear <- "2019"
-
 ```
 
 
@@ -392,6 +393,7 @@ rhs_dta1_year <- rhs_dta1 |>
 ## We merge the direct data to the rhs data. FH does not run if there is any missing value in the auxiliary variables, and therefore, any variable with missing value should be removed in advance.
 dta_ufh <-
   rhs_dta1_year |> 
+  select(-year) |> 
   left_join(pov_direct_year, by = join_by(!!area_var)) |> 
   select(-where(~any(is.na(.))))
 
@@ -504,19 +506,15 @@ head(fh_bench$ind)
 Create one dataframe that contains the direct and FH estimation results including MSE and CV results.
 
 ```{r res_prep, message = FALSE, warning = FALSE}
-pov_fh <- as.data.frame(estimators(fh_model, MSE = TRUE, CV = TRUE))
-head(pov_fh)
+pov_fh <-
+  as_tibble(estimators(fh_model, MSE = TRUE, CV = TRUE)) |> 
+  select(!!area_var := Domain, pov = FH, MSE = FH_MSE, CV = FH_CV) |>
+  mutate(year = singleyear,
+         estiamte = "UFH", 
+         type = "arop")
+pov_fh |> head()
 
-pov_fh <- pov_fh |>
-  rename(!!area_var := "Domain") |>
-  mutate(year = singleyear)
-
-bd_out |>
-  pin_write(x = pov_fh,
-            name = "pov_fh",
-            type = "rds")
-
-write.csv(pov_fh, "data/clean/pov_fh.csv")
+bd_out |> pin_write(x = pov_fh, name = "pov_fh", type = "rds")
 ```
 
 ### Poverty map
