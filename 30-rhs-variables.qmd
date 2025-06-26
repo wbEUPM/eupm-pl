@@ -29,18 +29,16 @@ knitr::opts_chunk$set(
 )
 
 pacman::p_load(
-  sf, 
-  knitr, 
-  purrr,
+  sf,
+  knitr,
   pins,
   scales,
-  patchwork,
-  dplyr, 
-  tidyverse,
   modelsummary,
   flextable,
   correlation,
-  datawizard
+  datawizard,
+  patchwork,
+  tidyverse
   )
 
 # Loading locally-developed
@@ -56,20 +54,27 @@ root_clean <- "./data/clean"
 bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
 bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
-bd_out <- "output/res-50-mfh" |> board_folder(versioned = T)
 ```
 
 
 ```{r var-name-set}
 area_var <- "id"
 year_var <- "year"
+year_range <- 2019:2023
 directpov <- "pov"
 directvar <- "vardir"
 ```
 
-## Dependent variable preparation
+## Overview
 
-Direct estimates of poverty and its variance, `pov_direct`. 
+In this script we prepare our right hand side variables that are used in the subsequent steps of the small area estimation and perform its exploratory analysis. 
+This includes:
+
+-   Loading and reshaping RHS variables
+
+-   Computing economically sound ratios, constructing complex variables and performing linear transformation
+
+We also load the dependent variable (direct estimates) of poverty and its variance for the exploratory purposes. 
 
 ```{r dta-load-direct}
 pov_direct <- bd_clean |> pin_read("pov_direct") |> 
@@ -77,49 +82,30 @@ pov_direct <- bd_clean |> pin_read("pov_direct") |>
   mutate(estimate = "Direct")
 ```
 
-```{r}
-#| echo: false
-mfh_dt0 <- 
-  pov_direct |>
-  select(all_of(c(area_var, year_var, directpov, directvar))) |> 
-  pivot_wider(
-    id_cols = all_of(area_var),
-    names_from = all_of(year_var),
-    values_from = all_of(c(directpov, directvar)),
-    names_glue = "{.value}{year}",
-    values_fn = ~ dplyr::first(na.omit(.x))
-  ) 
-```
-
-Wide-format reshaped direct poverty estimates have the following structure:
-
-```{r}
-mfh_dt0 |> glimpse()
-```
-
 ## Right hand side (RHS) variables
 
-Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each area consist of two components:
+Right hand side (RHS) variables i.e. indicators representative at the level of the target area for each area consist of two components: data and the metadata.
 
--   Data present in the wide format, where each column represents an individual variable and row and observation for one area and one year. Specifically columns are:
+Data must be prepared in the wide format, where each column represents an individual variable and row represent observations for each area and in one year. Specifically columns are:
 
-    -   `id` regional identifier used to match RHS variables with regions and poverty estiamtes
+-   `id` regional identifier used to match RHS variables with regions and poverty estimates;
+-   `year` year for which observations are used;
+-   `x1`, `x2`, `x3`, ..., `xn` are the RHS variables described in the metadata.
 
-    -   `year` year for which observations are used.
+> Note that sometimes survey data used for calculating the poverty estimates reports income and corresponding poverty rates with the 1 year lag. THerefore, combining RHS variables with poverty rates requires carefully adjusting the year of the RHS variabels. 
 
-    -   `x1`, `x2`, `x3`, ..., `xn` are the RHS variables described in the metadata.
+Metadata table describes each variable and provides a short, self-explaining name, used in tables and regression tables across the subsequent analysis.
 
--   Metadata table describes briefly each variable and provides a short, self-explaining name, used in regression tables.
-
-Loading and reshaping data.
+### Loading RHS data
 
 ```{r dta-load-rhs}
+#| echo: true
 file_name <- "Auxiliary variables (edited v6).xlsx"
 
 rhs_meta_0 <-
   file.path(root_raw, "data-other", file_name) |>
   readxl::read_excel(sheet = 2) |> 
-  select(var = Variable, name = `Variable (in English)`) |> 
+  select(var = Variable, name = `Variable (in English) abbrevation`) |> 
   mutate(var = str_to_lower(var))
 
 rhs_dta_0 <- 
@@ -150,61 +136,44 @@ rhs_dta_0 <-
   pivot_wider(names_from = "var", values_from = "value")
 ```
 
+Exemplary structure of the RHS variables and their metadata:
+
 ```{r dta-str-rhs}
 #| echo: true
 rhs_dta_0 |> select(1:10) |> glimpse()
 rhs_meta_0 |> glimpse()
 ```
 
-### Reshaping data to the re-gression-ready form 
-
-At this step we prepare data in the exact form that enables us to perform any small area estimations. This includes:
-
--   Dependent variable preparation in the wide format with year-specific poverty rates as columns and regions as rows. `id` column is used as a regional identifier.
-
--   RHS variables preparation and reshaping:
-
-    -   Computing economically sound ratios, constructing complex variables and performing linear transformation
-
-    -   Reshaping data to the wide format with variables names and years in columns and regions identified by `id` variable in rows.
-
--   RHS variables selection that maximize the predictive power.
-
-
 ### RHS variables preparation
 
-While computing the new variables, we need to make sure that we:
-
--   name them uniquely and appropriately;
-
--   record relevant metadata for them.
-
-@tbl-rhs-descr-stats provides the summary statistics for the RHS variables after we computed additional ones.
+At this stage we compute (if needed) new variables making sure that those which are used in the SAE analysis are uniquely and appropriately identifies and document in the metadata.
 
 ```{r var-preparation}
+#| echo: true
 rhs_dta <-
   rhs_dta_0 |> 
   mutate(
+    # Compute new variables here
     x101 = x4 / x3 # Share of Working Age pop in the region,
   ) |> 
   mutate(year = year + 1) |> 
   left_join(pov_direct |> 
-              filter(id == "011212000000") |> 
               filter(type == "arop") |> 
               select(id, year, pov, SE = SD, CV, N), 
             by = join_by(id, year)) |> 
   select(id, year, pov, SE, CV, N, everything()) |> 
-  select(-x16)
+  select(-x16, -x33) |> 
+  filter(year %in% year_range)
 
-
+# Remember to document new variables following the example below
 rhs_meta <- 
   tribble(
     ~var, ~name,
     "x101", "Workage pop share",
     "pov", "Poverty rate (direct est.)",
     "SE", "Standard Error (direct est.)",
-    "CV", "Coef of var",
-    "N", "N survey obs",
+    "CV", "Coef. of var. (direct est.)",
+    "N", "N obs. (direct est.)",
   ) |> 
   bind_rows(rhs_meta_0)
 
@@ -218,8 +187,9 @@ rhs_dta_long <-
   mutate(year = as.character(year)) 
 ```
 
+## Exploratory analysis
 
-## Exploratory analysis of data
+@tbl-rhs-descr-stats provides the summary statistics for the RHS variables after we computed additional ones. @tbl-rhs-descr-stats-year presents year-specific averages, while @tbl-rhs-descr-stats-log does the averages after the logarithm transformation. 
 
 ```{r tbl-rhs-descr-stats}
 #| tbl-cap: Descriptive statistics of the RHS variables for all years
@@ -232,25 +202,27 @@ rhs_dta_long  |>
     output = "flextable",
     data = _
   ) |>
-  FitFlextableToPage()
+  FitFlextableToPage() |> 
+  width(1, 3)
 ```
 
-
 ```{r tbl-rhs-descr-stats-year}
-#| tbl-cap: Descriptive statistics of the RHS variables by years
+#| tbl-cap: Means by years
 rhs_dta_long |> 
   datasummary(
-    formula = name  ~ year * (value * (Mean + SD )) ,
+    formula = name  ~ year * (value * (Mean)) ,
     output = "flextable",
     data = _
   ) |>
   FitFlextableToPage() |> 
-  width(1, 2)
+  width(1, 3)
 ```
 
-After all variables are computed, we perform logarithm transformation of all contentious variables, where maximum is above 10, or difference between min and maximum exceeds 10 times.
+We perform logarithm transformation of all contentious variables, where maximum is above 10 and the difference between min and maximum exceeds 10 times.
 
-```{r}
+```{r dta-lin-transform}
+#| echo: true
+
 var_to_log <- 
   rhs_dta_long |>
   group_by(year, var) |> 
@@ -266,25 +238,25 @@ rhs_dta_long_log <-
   ungroup()
 ```
 
-Descriptive statistics after transformation is:
+Descriptive statistics after transformation is in @tbl-rhs-descr-stats-log.
 
 ```{r tbl-rhs-descr-stats-log}
-#| tbl-cap: Descriptive statistics of the RHS variables after log transformation
+#| tbl-cap: Descriptive statistics after log transformation
 rhs_dta_long_log |> mutate(type = "log") |> 
-  bind_rows(rhs_dta_long |> mutate(type = "level")) |> 
+  # bind_rows(rhs_dta_long |> mutate(type = "level")) |> 
   (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
   mutate(year = as_factor(year)) |> #glimpse()
   datasummary(
-    formula = name  ~ year * (value * (Mean ) * type),
+    formula = name  ~ year * (value * (Mean )),
     output = "flextable",
     data = _
   ) |>
   FitFlextableToPage()
 ```
 
-### Exploratory correlation analysis
+## Correlation analysis
 
-Before conducting the variable selection, we explore the correlations between our transformed variables and the poverty rates.
+Before conducting the variable selection, we explore the correlations between our transformed variables and the poverty rates in @tbl-cor.
 
 ```{r tbl-cor}
 #| tbl-cap: Correlatoin between poverty rates and key variables
@@ -296,41 +268,42 @@ stars.pval <- function(x){
 }
 
 dta_cor <-
-  rhs_dta_long_log |> mutate(type = "log") |> 
-  bind_rows(rhs_dta_long |> mutate(type = "level")) |> 
-  mutate(year = as.numeric(year) + 1) |> 
+  rhs_dta_long_log |> mutate(type = "log") |>
+  bind_rows(rhs_dta_long |> mutate(type = "level")) |>
+  mutate(year = as.numeric(year) + 1) |>
   left_join(pov_direct |> filter(type == "arop") |> select(id, year, pov),
-            by = join_by(id, year)) |> 
-  mutate(year = as.character(year)) |> 
+            by = join_by(id, year)) |>
+  mutate(year = as.character(year)) |>
   (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
   filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> 
-  select(id, year, type, pov, value, name) |> 
-  filter(str_detect(name, "x\\d")) |> 
-  pivot_wider(names_from = name, values_from = value) |> 
+  mutate(year = as_factor(year)) |>
+  select(id, year, type, pov, value, name) |>
+  filter(str_detect(name, "x\\d")) |>
+  pivot_wider(names_from = name, values_from = value) |>
   datawizard::data_group(type) |>
-  correlation::correlation() |> 
-  as_tibble() |> 
-  filter(Parameter1 == "pov") |> 
-  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |> 
-  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |> 
+  correlation::correlation() |>
+  as_tibble() |>
+  filter(Parameter1 == "pov") |>
+  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |>
+  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |>
   select(Group, Variable = Parameter2, stats) |>
-  pivot_wider(names_from = Group, values_from = stats) |> 
+  pivot_wider(names_from = Group, values_from = stats) |>
   arrange(Variable)
 
-dta_cor |> 
+dta_cor |>
   flextable() |>
   FitFlextableToPage()
 ```
 
-
 ## Saving RHS data
+
+Final step is to save the RHS data in the version-controlled way. For that, we employ `pins` package in R and  create a dedicated board for exchanging the clean data sets between scripts. 
+In this case, this is a board in `data/clean` folder, where nis with RHS data (`rhs_dta`) and metadata (`rhs_dta`) are created.
+
+> Note: we remove direct-estiamtes related data from this pin to avoid its duplication as it is being produced in another script and saved in the corresponding pin `pov_direct`.
 
 ```{r}
 rhs_dta_full <- rhs_dta |> select(id, year, matches("x\\d")) 
 bd_clean |> pin_write(rhs_dta_full, name = "rhs_dta")
 bd_clean |> pin_write(rhs_meta, name = "rhs_meta")
 ```
-
-
-
