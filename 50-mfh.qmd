@@ -1,6 +1,8 @@
 ---
 title: "The Multivariate Fay Herriot"
-author: "Ifeanyi Edochie"
+authors: 
+  - "Eduard Bukin"
+  - "Ifeanyi Edochie"
 format: 
   html:
     fig-width: 14
@@ -190,7 +192,7 @@ pov_covar <-
       left_join(x, by = join_by(id, vcov_type)) |> 
       as_tibble()
   })() |> 
-  mutate(across(contains("cov"), ~ifelse(is.na(.), 0, .))) |> 
+  mutate(across(starts_with("cov"), ~ifelse(is.na(.), 0, .))) |> 
   select(-variable) |> 
   arrange(id, vcov_type)
 ```
@@ -216,48 +218,10 @@ Right hand side (RHS) variables i.e. indicators representative at the level of t
 
 -   Metadata table describes briefly each variable and provides a short, self-explaining name, used in regression tables.
 
-```{r dta-load-rhs}
-rhs_dta_0 <- 
-  suppressMessages(file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
-      readxl::read_excel()) 
-
-new_names <- 
-  rhs_dta_0 |> slice(1) |> t() |> as.data.frame() |>
-  rownames_to_column() |> as_tibble() |> 
-  mutate(rowname = ifelse(str_detect(rowname, "\\.{2,}"), NA_character_, rowname)) |> 
-  fill(rowname) |> 
-  mutate(rowname = str_to_lower(rowname),
-         rowname = ifelse(!is.na(V1), str_c(rowname,"__", V1), rowname)) |> 
-  pull(rowname)
-
-rhs_dta <- 
-  rhs_dta_0 |> 
-  slice(-1) |> 
-  (\(x){colnames(x) <- new_names; x})() |> 
-  select(-no., -subregion) |> 
-  pivot_longer(
-    cols = matches("\\d{4}"), 
-    values_transform = \(x) suppressWarnings(as.numeric(x))
-    ) |> 
-  filter(!is.na(value)) |> 
-  separate(name, into = c("var", "year")) |> 
-  mutate(year = as.numeric(year)) |> 
-  pivot_wider(names_from = "var", values_from = "value")
-
-
-rhs_meta <-
-  file.path(root_raw, "data-other", "Auxiliary (potential) variables.xlsx") |>
-  readxl::read_excel(sheet = 2) |> 
-  select(var = Variable,
-         category = `Category of variable`,
-         name = `Variable (in English)`) |> 
-  mutate(var = str_to_lower(var))
-```
-
 ```{r dta-str-rhs}
-#| echo: true
-rhs_dta |> select(1:10) |> glimpse()
-rhs_meta |> glimpse()
+#| echo: true 
+rhs_dta <- bd_clean |> pin_read("rhs_dta")
+rhs_meta <- bd_clean |> pin_read("rhs_meta")
 ```
 
 ### Geo-spatial boundaries
@@ -275,7 +239,6 @@ Lastly, we define a set of key variables names used in the code below as well as
 
 ```{r set-var-names}
 #| echo: true
-
 area_var <- c("id") 
 year_var <- "year"
 directpov <- "pov"
@@ -283,236 +246,29 @@ directvar <- "vardir"
 year_set <- c(2019:2023)
 ```
 
-## Step 2: Variables preparation and selection
+## Step 2: Variables selection
 
-At this step we prepared in the exact form that enables its use in `eblupUFH` and `eblupMFH` functions. This includes:
-
--   Dependent variable preparation in the wide format with year-specific poverty rates as columns and regions as rows. `id` column is used as a regional identifier.
-
--   RHS variables preparation and reshaping:
-
-    -   Computing economically sound ratios, constructing complex variables and performing linear transformation
-
-    -   Reshaping data to the wide format with variables names and years in columns and regions identified by `id` variable in rows.
-
--   RHS variables selection that maximize the predictive power.
-
-### Dependent variable preparation
-
-```{r}
-#| echo: false
-mfh_dt0 <- 
-  pov_direct |>
-  select(id, year, all_of(c(year_var, directpov, directvar))) |> 
-  pivot_wider(
-    id_cols = all_of(area_var),
-    names_from = all_of(year_var),
-    values_from = all_of(c(directpov, directvar)),
-    names_glue = "{.value}{year}",
-    values_fn = ~ dplyr::first(na.omit(.x))
-  ) 
-```
-
-Wide-format reshaped direct poverty estimates have the following structure:
-
-```{r}
-mfh_dt0 |> glimpse()
-```
-
-### RHS variables preparation
-
-While computing the new variables, we need to make sure that we:
-
--   name them uniquely and appropriately;
-
--   record relevant metadata for them.
-
-@tbl-rhs-descr-stats provides the summary statistics for the RHS variables after we computed additional ones.
-
-```{r var-preparation}
-rhs_dta0 <- 
-  rhs_dta |> 
-  mutate(
-    x101 = x4 / x3, # Share of Working Age pop in the region,
-    x102 = x6 / (x3 / x42),
-    x103 = x7 / (x3 / x42),
-    x104 = x8 / (x3 / x42),
-    x105 = x9 / (x3/10000),
-    x106 = x12 / (x3 / x42),
-    x118 = x12 / (x3 / x42),
-    x107 = x14 / (x3 / x42),
-    x108 = x23 / (x3/10000),
-    x109 = x41 /  (x3/10000),
-    x110 = x40 /  (x3/x42),
-    x111 = x22 /  (x3/x42),
-    x112 = x17 /  (x12),
-    x113 = x18 /  (x12),
-    x114 = x19 /  (x12),
-    x115 = x13 /  (x12),
-    x116 = x1 /  (x3 / 1000),
-    x117 = x2 /  (x3 / 1000),
-    x119 = x29 /  (x4 / 1000),
-    x120 = x30 /  (x4 / 1000)
-  ) |> 
-  select(#-x1, -x2, -x3, 
-         -x6, -x7, -x8, -x12, -x13,
-         -x17, -x18, -x19, -x31, -x33)
-
-rhs_meta_extra <- 
-  tribble(
-    ~var, ~name,
-    "x101", "Workage pop share",
-    "x102", "Sahre fam. poverty ben.",
-    "x103", "Sahre fam. homelessness ben.",
-    "x104", "Sahre fam. unemployment ben.",
-    "x105", "Market places per 10000 person",
-    "x106", "Dwelling appartment per family",
-    "x107", "Dwelling alowance per family",
-    "x108", "Pharmacies per 10000 person",
-    "x109", "Care facil. resid. per 10000 person",
-    "x110", "Childrent 0-3 per family",
-    "x111", "Share of families with Large Fam Card",
-    "x112", "Water, share dwel.",
-    "x113", "Heating, share dwel.",
-    "x114", "Gas, share dwel.",
-    "x115", "Rooms per apt.",
-    "x116", "Birth rate per 1000",
-    "x117", "Deth rate per 1000",
-    "x118", "Dwelling rooms per family",
-    "x119", "Immigrants per 1000 working pop",
-    "x120", "Emmigrants per 1000 working pop"
-  )
-
-rhs_meta_0 <- rhs_meta |> bind_rows(rhs_meta_extra)
-
-# # Identify the columns of interest
-# x_vars <- mfh_dt0 |> select(matches("^X\\d+y\\d+")) |> names()
-# x_vars_numeric <- x_vars[sapply(mfh_dt0[x_vars], is.numeric)]
-# 
-# # Function to min-max scale
-# min_max_scale <- function(x) {
-#   rng <- range(x, na.rm = TRUE)
-#   (x - rng[1]) / (rng[2] - rng[1])
-# }
-# 
-# # Mutate log and scaled versions
-# mfh_dt <-
-#   mfh_dt0 %>%
-#   mutate(
-#     # Add log-transformed columns
-#     across(all_of(x_vars_numeric), .fns = ~ log1p(.), .names = "log{.col}"),
-#     
-#     # Add min-max scaled columns
-#     across(all_of(x_vars_numeric), .fns = ~ min_max_scale(.), .names = "scaled{.col}")
-#   )
-```
-
-```{r tbl-rhs-descr-stats}
-#| tbl-cap: Descriptive statistics of the RHS variables
-rhs_dta0 |>
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |>
-  datasummary(
-    formula = name  ~ value * (Mean + SD + Min + P50 + Max),
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
-```
-
-After all variables are computed, we perform logarithm transformation of all contentious variables, where maximum is above 10, or difference between min and maximum exceeds 10 times.
+### Converting variables to logs
 
 ```{r}
 var_to_log <- 
-  rhs_dta0 |>
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  group_by(year, var) |> 
+  rhs_dta |>
+  pivot_longer(starts_with("x")) |> 
+  group_by(year, name) |> 
   summarise(min = min(value), max = max(value)) |> 
-  filter(min * 10 < max & max > 10 | max > 100) |> pull(var) |> unique()
+  filter(min * 10 < max & max > 10 | max > 100) |> pull(name) |> unique()
 
-rhs_dta1 <- 
-  rhs_dta0 |>
+rhs_dta_log <-
+  rhs_dta |>
+  pivot_longer(starts_with("x"))  |>
   group_by(year) |>
-  mutate(across(all_of(var_to_log), ~ log(.))) |> 
-  ungroup()
-```
-
-Descriptive statistics after transformation is:
-
-```{r tbl-rhs-descr-stats}
-#| tbl-cap: Descriptive statistics of the RHS variables after transformation
-rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> #glimpse()
-  datasummary(
-    formula = name  ~ value * (Mean ) * type,
-    output = "flextable",
-    data = _
-  ) |>
-  FitFlextableToPage()
-```
-
-### Exploratory correlation analysis
-
-Before conducting the variable selection, we explore the correlations between our transformed variables and the poverty rates.
-
-```{r tbl-cor}
-#| tbl-cap: Correlatoin between poverty rates and key variables
-stars.pval <- function(x){
-  stars <- c("***", "**", "*", "")
-  var <- c(0, 0.01, 0.05, 0.10, 1)
-  i <- findInterval(x, var, left.open = T, rightmost.closed = T)
-  stars[i]
-}
-
-dta_cor <-
-  rhs_dta1 |> mutate(type = "log") |> 
-  bind_rows(rhs_dta0 |> mutate(type = "level")) |> 
-  mutate(year = year + 1) |> 
-  left_join(pov_direct |> filter(type == "arop") |> select(id, year, pov)) |> 
-  pivot_longer(contains("x"), names_to = "var", cols_vary = "slowest") |>
-  filter(!is.na(pov)) |> 
-  mutate(var_order = str_extract(var, "\\d{1,4}") |> as.numeric()) |>
-  arrange(var_order) |>
-  left_join(rhs_meta_0, by = join_by(var)) |>
-  mutate(name = str_c(var, " ", name) |> as_factor()) |>
-  mutate(year = as.character(year)) |>
-  (\(x) bind_rows(x |> mutate(year = "All years"), x))() |>
-  filter(year == "All years") |>
-  mutate(year = as_factor(year)) |> 
-  # filter(str_detect(var, "x10")) |> 
-  select(id, year, type, pov, value, name) |> 
+  mutate(value = ifelse(name %in% var_to_log, log(value), value)) |>
+  # filter(is.nan(value))
+  ungroup() |> 
   pivot_wider(names_from = name, values_from = value) |> 
-  datawizard::data_group(type) |>
-  correlation::correlation() |> 
-  as_tibble() |> 
-  filter(Parameter1 == "pov") |> 
-  mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |> 
-  mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |> 
-  select(Group, Variable = Parameter2, stats) |>
-  pivot_wider(names_from = Group, values_from = stats) |> 
-  arrange(Variable)
-
-dta_cor |> 
-  flextable() |>
-  FitFlextableToPage()
-
+  select(-x31)
 ```
+
 
 ### Variable Selection
 
@@ -520,8 +276,9 @@ Next, we apply a simple variable selection process which employs the stepwise re
 
 ```{r var-selection}
 #| echo: false
+
 dta_full <-
-  rhs_dta1 |> 
+  rhs_dta_log |> 
   mutate(year = year + 1) |> 
   left_join(pov_direct |> filter(type == "arop") |> 
               select(all_of(c(area_var, year_var, directpov, directvar)))) |> 
@@ -576,7 +333,7 @@ model_pooled <-
     dt = dta_full |> select(pov, contains("x1")),
     xvars = candidate_vars,
     y = directpov,
-        cor_thresh = 0.7,
+        cor_thresh = 0.5,
         k = log(nrow(dta_full)),
     trace = 0
   ) ### using log(n) to force BIC selection
@@ -601,7 +358,7 @@ mfh_formula |>
       x |>
         str_remove_all("_\\d{4}") |> 
         map_chr( ~ {
-          match_coef <- rhs_meta_0 |> filter(var == .x) |> pull(name)
+          match_coef <- rhs_meta |> filter(var == .x) |> pull(name)
           if (is.null(match_coef) | length(match_coef) == 0) {
             return(.x)
           } else {
@@ -627,7 +384,7 @@ set_names(year_set, year_set)  |>
       x |>
         str_remove_all("_\\d{4}") |> 
         map_chr( ~ {
-          match_coef <- rhs_meta_0 |> filter(var == .x) |> pull(name)
+          match_coef <- rhs_meta |> filter(var == .x) |> pull(name)
           if (is.null(match_coef) | length(match_coef) == 0) {
             return(.x)
           } else {
@@ -646,10 +403,13 @@ Notes: Significance levels are: `***` p-value \< 0.001, `***` p-value \< 0.01, `
 
 ```{r fn-run-eblups}
 # Run eblup estimates for UVFH and MVFH
-est_ufh_mfh1 <- function(dta, formula, 
-                         iter = 500, precision = 0.0001,
-                         verbose = FALSE) {
-  
+est_ufh_mfh1 <- 
+  function(dta,
+           formula,
+           iter = 500,
+           precision = 0.0001,
+           verbose = FALSE) {
+    
   var_cols <- dta |> select(contains("vardir"), contains("cov")) |> names()
   print(formula)
   cat("eblupUFH --- \n")
@@ -680,7 +440,7 @@ est_ufh_mfh1 <- function(dta, formula,
     }, silent = T
     )
   } else {
-    model1_obj <- try({
+    model_obj <- try({
       eblupMFH1(
         formula = formula,
         vardir = var_cols,
@@ -697,7 +457,7 @@ est_ufh_mfh1 <- function(dta, formula,
   cat("eblupMFH2 --- \n")
   tic(msg = "eblupMFH2")
   if (verbose) {
-    model1_obj <- try({
+    model2_obj <- try({
       eblupMFH2_v2(
         formula = formula,
         vardir = var_cols,
@@ -741,14 +501,18 @@ est_ufh_mfh1 <- function(dta, formula,
 ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
   # ids <- mfh_dt |> select(id)
   eblup_dt <- fit$eblup |> as_tibble()
+  
   mse_dt <- fit$MSE |> as_tibble() |> rename_with( ~ str_replace(., "pov", "vardir"))
+  re_dt <- fit$randomEffect |> as_tibble() |> rename_with( ~ str_replace(., "pov", "re"))
+  
   # browser()
-  bind_cols(ids, eblup_dt, mse_dt) |>
-    pivot_longer(c(contains("pov"), contains("vardir"))) |>
+  bind_cols(ids, eblup_dt, mse_dt, re_dt) |>
+    pivot_longer(c(contains("pov"), contains("vardir"), contains("re"))) |>
     mutate(year = str_extract(name, "\\d{4}") |> as.integer(),
            name = str_remove(name, "\\d{4}")) |>
     pivot_wider(values_from = value, names_from = name) |>
-    rename_with(.fn = ~ str_remove(., "_"), .cols = c(contains("pov"), contains("vardir"))) |> 
+    rename_with(.fn = ~ str_remove(., "_"), 
+                .cols = c(contains("pov"), contains("vardir") , contains("re"))) |> 
     mutate(
       CV  = sqrt(vardir) / pov,
       SD = sqrt(vardir),
@@ -790,19 +554,7 @@ eblup_const_cov <-
 bd_out |> pin_write(eblup_const_cov, type = "rds")
 ```
 
-```{r}
-# eblup_zero_cov <- bd_out |> pin_read("eblup_zero_cov")
-# eblup_zero_cov$eblups[[1]]$eblup |> all.equal(eblup_zero_cov$eblups[[2]]$eblup)
-# 
-# eblup_const_cov <- bd_out |> pin_read("eblup_const_cov")
-# eblup_zero_cov$eblups[[1]]$eblup |> all.equal(eblup_const_cov$eblups[[1]]$eblup)
-# 
-# 
-# eblup_zero_cov$eblups[[2]]$eblup |> all.equal(eblup_const_cov$eblups[[2]]$eblup)
-
-
-```
-
+### MFH with a constant temporal variance across regiona
 
 ```{r mfh-two-years-pairs, eval=FALSE}
 dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
@@ -842,7 +594,7 @@ est_mfh_pair <- function(one_comb) {
   model1_obj <- try(eblupMFH1_v2(
     mfh_formula_local,
     vardir = var_cols_local,
-    data = dta_mhf,
+    data = dta_mhf  |> mutate(across(starts_with("cov"), ~ . / 10)),
     MAXITER = 1000,
     PRECISION = 0.01
   ))
@@ -852,9 +604,9 @@ est_mfh_pair <- function(one_comb) {
   model2_obj <- try({eblupMFH2_v2(
     mfh_formula_local,
     vardir = var_cols_local,
-    data = dta_mhf |> mutate(cov2022_2023 = cov2022_2023 / 3),
+    data = dta_mhf |> mutate(across(starts_with("cov"), ~ . / 10)),
     MAXITER = 1000,
-    PRECISION = 0.001
+    PRECISION = 0.01
   )}, silent = T)
   
   tibble(
@@ -1140,25 +892,25 @@ First, we perform the shapiro wilks normality test on the model errors, $\vareps
 ```{r sw-test}
 #| echo: false
 
-pov_mfh_dir |> 
-  mutate(error = pov_direct - pov) |>
-  group_by(year, estimate) |> #glimpse()
-  filter(estimate != "Direct") |> 
-  nest() |> 
-  mutate(shap_test = map(data, ~{
-    out <- try(.x$error |> shapiro.test() |> glance(), silent = T)
-    if ("try-error" %in% class(out)) {
-      browser()
-      out <- tibble()
-    }
-    out
-  })) |> 
-  unnest(shap_test) |> 
-  mutate(stats = str_c(number(statistic,0.001), stars.pval(p.value))) |> 
-  select(-data, -statistic, -p.value, -method) |> 
-  pivot_wider(names_from = year, values_from = stats) |> 
-  flextable() |> 
-  FitFlextableToPage()
+# pov_mfh_dir |> 
+#   mutate(error = pov_direct - pov) |>
+#   group_by(year, estimate) |> #glimpse()
+#   filter(estimate != "Direct") |> 
+#   nest() |> 
+#   mutate(shap_test = map(data, ~{
+#     out <- try(.x$error |> shapiro.test() |> glance(), silent = T)
+#     if ("try-error" %in% class(out)) {
+#       # browser()
+#       out <- tibble()
+#     }
+#     out
+#   })) |> 
+#   unnest(shap_test) |> 
+#   mutate(stats = str_c(number(statistic,0.001), stars.pval(p.value))) |> 
+#   select(-data, -statistic, -p.value, -method) |> 
+#   pivot_wider(names_from = year, values_from = stats) |> 
+#   flextable() |> 
+#   FitFlextableToPage()
 # 
 # ### first lets replace the negative values with 0
 # eblup_dt[eblup_dt < 0] <- 0
