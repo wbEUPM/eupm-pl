@@ -1,0 +1,470 @@
+---
+title: "Exploratory analysis of the poverty estaimates by models"
+# author: "Eduard Bukin" 
+format: html
+editor: source
+params:
+  eval_all: FALSE
+  harvest: FALSE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=FALSE}
+# Recollect data from the sources?
+if ("try-error" %in% class(try(params$eval_all)))
+  params <- list(eval_all = FALSE, harvest = FALSE)
+```
+
+```{r}
+#| label: setup
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+
+# Libraries
+pacman::p_load(
+  flextable, 
+  ftExtra, 
+  scales, 
+  tidyverse, 
+  stringr,
+  pins,
+  sf, 
+  ggplot2, 
+  cowplot,
+  ggrepel,
+  glue, 
+  scales, 
+  patchwork, 
+  biscale,
+  modelsummary
+)
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
+
+# Loading locally-developed
+list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
+  walk(source)
+
+# Raw data root
+root_raw <- "./data/raw"
+root_temp <- "./data/temp"
+root_clean <- "./data/clean"
+
+# Data-storage boards
+bd_raw <- root_raw |> file.path("api") |> board_folder(versioned = T)
+bd_aux <- root_temp |> board_folder(versioned = T)
+bd_clean <- root_clean |> board_folder(versioned = T)
+
+# Years range
+range <- c(2019:2030)
+focus_type <- "arop"
+```
+
+## Displaying the direct estimates results
+
+```{r dta-load}
+geoms <-  bd_clean |> pin_read("geometries")
+geom_nuts3 <- geoms$level4 
+geom_nuts2 <- geoms$level2
+
+# Poverty estimates
+pov_direct <- 
+  bd_clean |> pin_read("pov_direct") |>
+  mutate(estimate = "Direct") |> 
+  select(id = subcode, year, type, estimate, pov, 
+         MSE = vardir, RMSE = SD, CV, N) |> 
+  glimpse()
+
+pov_fh <- bd_clean |> pin_read("pov_fh_multipleyears") |> 
+  mutate(RMSE = sqrt(MSE)) |> mutate(year = as.numeric(year))
+
+# MFH 0 cov: 
+pov_mvfh <- 
+  board_folder('output/res-50-mfh') |> pin_read("eblup_zero_cov") |> 
+  # bind_rows(
+  #   board_folder('output/res-50-mfh') |> pin_read("eblup_const_cov")
+  # ) |> 
+  filter(model %in% c("MFH2 (0 cov)", "MFH2 (const. cov. 1y)")) |>
+  unnest(results) |> 
+  mutate(estimate = model) |> 
+  select(id, year, type, estimate, pov, MSE = vardir, RMSE = SD, CV)
+
+pov_dta <- 
+  pov_direct |> bind_rows(pov_fh) |> bind_rows(pov_mvfh) |> 
+  left_join(pov_direct |> select(id, year, type, direct_pov = pov, 
+                                 direct_MSE = MSE, direct_CV = CV,
+                                 direct_RMSE = RMSE, direct_N = N),
+            by = join_by(id, year, type))
+
+# pov_dta |> count(estimate, type)
+
+# Combining data with geometries and filtering relevant poverty measures and years
+pov_dta_full <- geom_nuts3 |>
+  left_join(pov_dta, by = join_by(id)) |>
+  as_tibble() |> st_as_sf() |> 
+  filter(type == focus_type, year %in% range)
+```
+
+## Poverty maps
+
+```{r}
+pov_maps <-
+  pov_dta_full |>
+  group_by(year2 = year, type2 = type, estimate2 = estimate) |> 
+  nest() |> ungroup() |>  
+  (\(x) {
+    expand_grid(year2 = x$year2, type2 = x$type2) |> 
+      distinct() |> left_join(x, by = join_by(year2, type2))
+  })() |> 
+  arrange(year2, type2) |> 
+  mutate(plot_poverty =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "pov",
+                                  subtitle_glue = "{estimate}. {type}. {year}", 
+                                  legend_glue = "Poverty",
+                                  force_breaks = c(0, .1, .15, .2, .25, .3, .35, .4, 0.55)
+                                  )
+               )) |> 
+  mutate(plot_SE =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "RMSE", 
+                                  subtitle_glue = "{estimate}. {type}. {year}", 
+                                  legend_glue = "RMSE (SE)",
+                                  force_breaks = c(.005, .02, .03, .035, 
+                                                   .04, 0.055, 0.08, .15 ),
+                                  label_form = label_number(0.001) 
+                                  )))|> 
+  mutate(plot_CV =
+           map(data, 
+               ~ fct_map_chreplot(.x, var_fill = "CV", 
+                                  subtitle_glue = "{estimate}. {type}. {year}", 
+                                  legend_glue = "CV",
+                                  force_breaks = c(0.04, .1, .2, .25, .3, .35, 
+                                                   0.4, .45, .5, 0.65),
+                                  label_form = label_number(0.01) 
+                                        ))) 
+
+
+pov_plots <-
+  pov_dta_full |>
+  group_by(year2 = year, type2 = type) |> 
+  nest() |> ungroup() |> arrange(year2, type2) |>
+    mutate(plot_povcompare =
+           map(
+             data,
+             ~fct_plot_scatter(
+               .x,
+               x_var = "direct_pov",
+               y_var = "pov",
+               colour_var = "estimate",
+               x_title_glue = "Direct estimate poverty rate",
+               y_title_glue = "Model-based poverty",
+               title_glue = "",
+               subtitile_glue = "{type}. {year}",
+               legendtitle_glue = "Model",
+               scale_x_label = label_percent(), expand_x = NULL, expand_y = NULL
+             )
+           ))
+```
+
+## Poverty
+
+```{r}
+# plt1 <-
+pov_maps |>
+  filter(year2 %in% c(2019, 2023)) |>
+  pull(plot_poverty) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+
+```{r}
+# plt1 <-
+pov_maps |>
+  filter(estimate2 == "UFH") |>
+  pull(plot_poverty) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+### CV
+
+```{r}
+pov_maps |>
+  filter(year2 %in% c(2019, 2023)) |>
+  pull(plot_CV) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+### SE
+
+```{r}
+pov_maps |>
+  filter(year2 %in% c(2019, 2023)) |>
+  pull(plot_SE) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+## Differences between poverty estimates 
+
+```{r}
+pov_dta_full |> 
+  filter(estimate != "Direct") |> 
+  fct_plot_scatter(
+               x_var = "direct_pov",
+               y_var = "pov",
+               colour_var = "estimate",
+               x_title_glue = "Poverty rate (Direct estimates) ",
+               y_title_glue = "Model-based poverty",
+               title_glue = "",
+               subtitile_glue = "{type}. {year}",
+               legendtitle_glue = "Model",
+               scale_x_label = label_percent(), expand_x = NULL, expand_y = NULL
+             ) + 
+  facet_wrap(. ~ year)
+```
+
+
+## Poverty change by regions 
+
+```{r}
+pov_dta_full |> 
+  mutate(Region = name |> str_remove("PODREGION") |> as_factor() |> fct_reorder(MSE, .desc = T)) |> 
+  fct_plot_scatter(
+               x_var = "Region",
+               y_var = "pov",
+               colour_var = "estimate",
+               x_title_glue = "Region (Ordered by decreasing MSE) ",
+               y_title_glue = "Model-based poverty rate",
+               title_glue = "",
+               # subtitile_glue = "{type}. {year}",
+               legendtitle_glue = "Model",
+               scale_x_label = label_percent(), expand_x = NULL, expand_y = NULL, 
+               add_smooth = F
+             ) + 
+  scale_x_discrete() +
+  facet_wrap(. ~ year) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3))
+```
+
+
+##
+
+```{r}
+pov_dta_full |> 
+  select(id, name, year, type, estimate, pov, RMSE, CV) |> 
+  mutate(group_id = str_c(estimate, year)) |> 
+  pivot_longer(c(pov, CV, RMSE), names_to = "var") |> 
+  mutate(
+    var = case_when(
+      var == "pov" ~ "Poverty rate",
+      var == "RMSE" ~ "RMSE (SE)",
+      var == "CV" ~ "Coef. of variation",
+    ) |>
+      as_factor() |>
+      fct_relevel("Poverty rate")
+  ) |>  
+  fct_plot_scatter(
+               x_var = "year",
+               y_var = "value",
+               colour_var = "estimate",
+               group_var = "group_id",
+               x_title_glue = "Year",
+               y_title_glue = "",
+               title_glue = "",
+               subtitile_glue = "",
+               legendtitle_glue = "Estimate",
+               scale_y_label = label_percent(0.1),
+               scale_x_label = function(x) x,
+               expand_x = NULL, 
+               expand_y = NULL, 
+               add_smooth = F, 
+               add_line = F,
+               add_point = F,
+             ) + 
+  facet_wrap(type ~ var, scales = "free") + 
+  scale_x_continuous() +
+  geom_boxplot(aes(colour = estimate)) + 
+  geom_hline(yintercept = 0.2)
+```
+
+
+## SE change by regions 
+
+```{r}
+pov_dta_full |> 
+  left_join(
+    pov_dta_full |> 
+      filter(year == 2023, estimate == "Direct") |> arrange(MSE) |>
+      st_drop_geometry() |> 
+      mutate(name2 = name |> str_remove("PODREGION") |> as_factor()) |> 
+      select(id, name2) 
+  ) |> 
+  fct_plot_scatter(
+               x_var = "name2",
+               y_var = "RMSE",
+               colour_var = "estimate",
+               x_title_glue = "Region (Ordered by decreasing MSE) ",
+               y_title_glue = "Model-based RMSE (SE)",
+               title_glue = "",
+               # subtitile_glue = "{type}. {year}",
+               legendtitle_glue = "Model",
+               scale_x_label = label_percent(), expand_x = NULL, expand_y = NULL, 
+               add_smooth = F
+             ) + 
+  scale_x_discrete() +
+  facet_wrap(. ~ year) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3))
+```
+
+## SE change by regions v2
+
+```{r}
+pov_dta_full |> 
+  st_drop_geometry() |>
+  group_by(year) |> 
+  nest() |> 
+  mutate(
+    plot = map(data, ~{
+      .x |>
+        left_join(
+          .x |> filter(estimate == "Direct") |> arrange(MSE) |>
+            mutate(name2 = row_number()) |>
+            select(id, name2)
+        ) |>
+        fct_plot_scatter(
+          x_var = "name2",
+          y_var = "RMSE",
+          colour_var = "estimate",
+          x_title_glue = "Region (ordered by decreasing MSE) ",
+          y_title_glue = "Model-based RMSE (SE)",
+          title_glue = "",
+          # subtitile_glue = "{type}. {year}",
+          legendtitle_glue = "Model",
+          scale_x_label = label_percent(1),
+          expand_y = c(0, 0.12),
+          expand_x = NULL,
+          add_smooth = F, add_line = F
+        ) +
+        scale_x_continuous() +
+        # facet_wrap(. ~ year) +
+        theme(axis.text.x = element_text(
+          angle = 90,
+          vjust = 0.5,
+          hjust = 1,
+          size = 3
+        ))
+    })
+  ) |>
+  pull(plot) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+
+
+## CV change by regions v2
+
+```{r}
+pov_dta_full |> 
+  st_drop_geometry() |>
+  group_by(year) |> 
+  nest() |> 
+  mutate(
+    plot = map(data, ~{
+      .x |>
+        left_join(
+          .x |> filter(estimate == "Direct") |> arrange(CV) |>
+            mutate(name2 = row_number()) |>
+            select(id, name2)
+        ) |>
+        fct_plot_scatter(
+          x_var = "name2",
+          y_var = "CV",
+          colour_var = "estimate",
+          x_title_glue = "Region (ordered by decreasing MSE) ",
+          y_title_glue = "Model-based CV",
+          title_glue = "",
+          # subtitile_glue = "{type}. {year}",
+          legendtitle_glue = "Model",
+          scale_x_label = label_percent(1),
+          expand_y = c(0, 0.50),
+          expand_x = NULL,
+          add_smooth = F, add_line = F
+        ) +
+        scale_x_continuous() +
+        # facet_wrap(. ~ year) +
+        theme(axis.text.x = element_text(
+          angle = 90,
+          vjust = 0.5,
+          hjust = 1,
+          size = 3
+        ))
+    })
+  ) |>
+  pull(plot) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+```
+
+## Residuals plots
+
+```{r}
+dt_resid <- pov_dta_full |> filter(estimate != "Direct") |> 
+  mutate(res = direct_pov  - pov) 
+
+dt_resid  |> 
+  filter(estimate != "Direct") |>
+  # mutate(estimate = as_factor(estimate)) |> 
+  group_by(year, estimate2 = estimate) |>
+  nest() |> 
+  mutate(
+    plot = map(data, ~{
+      .x |>
+        ggplot() +
+        aes(x = res) +
+        geom_density(aes(linetype = "Actual dist."), show.legend = T) +
+        stat_function(fun = dnorm,
+                      args = list(mean = mean(.x$res), sd = sd(.x$res)),
+                      aes(linetype = "Normal dist."))+
+        scale_color_brewer("Estimator", palette = "Set1") +
+        scale_x_continuous("Residuals") +
+        scale_y_continuous(NULL) +
+        theme_bw() + 
+        labs(subtitle = unique(.x$estimate))
+  
+    })
+  ) |>
+  pull(plot) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
+  
+
+dt_resid  |>
+  filter(estimate != "Direct") |>
+  ggplot() +
+  aes(sample = res, colour = estimate) + 
+  stat_qq() + stat_qq_line(colour = "black") + 
+  facet_wrap(. ~ year) +
+  scale_color_brewer("Estimator", palette = "Set1") +
+  scale_x_continuous("Residuals") +
+  scale_y_continuous(NULL) +
+  theme_bw()
+```
+
+## Descriptive statistcs
+
+
+
