@@ -1,18 +1,18 @@
 project:
-  type: book
+  # type: book
   output-dir: reports
 
 book:
   title: "EUPM: Poland"
   date: "June 20, 2025"
-  chapters:
-    - index.qmd
-    # - 05-geometries.qmd
-    - 10-direct-estimates.qmd
-    # - 20-other-variables.qmd
-    # - 30-data-mege.qmd
-    # - 40-fh.qmd
-    # - 50-mfh.qmd
+  # chapters:
+  #   - index.qmd
+  #   # - 05-geometries.qmd
+  #   - 10-direct-estimates.qmd
+  #   # - 20-other-variables.qmd
+  #   # - 30-data-mege.qmd
+  #   # - 40-fh.qmd
+  #   # - 50-mfh.qmd
     
 bibliography: references.bib
 

@@ -109,7 +109,7 @@ Run manually and save results, please.
 ```{r est-mfh}
 #| eval: false
 
-run_save_fh <- function(prefix, candidate_vars) {
+run_save_fh <- function(prefix, candidate_vars, pov_local = pov_direct) {
 
 # UFH in a loop ---------------------------------------------------------------
 # prefix <- "fh_model__10_v2_avar__"
@@ -121,7 +121,7 @@ for (i in as.character(year_set)){
   
   # browser()
   # try({
-  survey_dt_tmp <- pov_direct |> filter(year == i, type == type_poverty)
+  survey_dt_tmp <- pov_local |> filter(year == i, type == type_poverty)
   rhs_dt_tmp <- rhs_dta1  |> filter(year == as.character(as.numeric(i)))
   
   dta_ufh <-
@@ -141,7 +141,7 @@ for (i in as.character(year_set)){
                              y = "pov",
                              cor_thresh = 0.7,
                              criteria = criteria,
-                             vardir = "MSE", 
+                             vardir = "vardir", 
                              transformation = "arcsin", 
                              eff_smpsize = "N",
                              method = "ml")
@@ -153,7 +153,7 @@ for (i in as.character(year_set)){
                  # fixed = str_c("pov ~",
                  #   str_c(candidate_vars, collapse = "+")) |>
                  #   as.formula(),
-                 vardir =  "MSE", 
+                 vardir = "vardir", 
                  combined_data = as.data.frame(dta_ufh), 
                  domains = "id",
                  method = method, 
@@ -226,6 +226,12 @@ run_save_fh(prefix = "fh_model__6_final_avar__",
             candidate_vars = c("x4", "x5", "x11", "x29", "x31", "x3"))
 
 run_save_fh(prefix = "fh_model__9_final_1_avar__",
+            candidate_vars = c("x4", "x5", "x11", "x29", "x31", 
+                               "x3", "x22", "x42", "x19"))
+
+pov_anchored <- pov_direct |> filter(type == "arop19") |> mutate(type = "arop")
+run_save_fh(prefix = "fh_model__9_final_AROP19__",
+            pov_local = pov_anchored,
             candidate_vars = c("x4", "x5", "x11", "x29", "x31", 
                                "x3", "x22", "x42", "x19"))
 ```
@@ -308,6 +314,14 @@ get_mhf_reg("fh_model__6_final_avar__")
 get_mhf_reg("fh_model__9_final_1_avar__")
 ```
 
+### AROP19
+
+```{r}
+
+get_mhf_reg("fh_model__9_final_AROP19__")
+```
+
+
 ## Mapping and plotting
 
 ```{r}
@@ -327,6 +341,12 @@ pov_dta <-
   bind_rows(bd_clean |>
               pin_read("fh_model__9_final_1_avar__") |> 
               mutate(estimate = str_c(estimate, " 9 var"))) |>
+  # bind_rows(bd_clean |>
+  #             pin_read("fh_model__9_final_AROP19__") |> 
+  #             mutate(estimate = str_c(estimate, " AROP 19 (9 var)"))) |>
+  bind_rows(bd_clean |> pin_read("pov_mfh") |>
+              mutate(year = as.character(year)) |> 
+              filter(estimate %in% c("MFH2 (0 cov)"))) |>
   mutate(RMSE = sqrt(MSE)) |> 
   mutate(year = as.numeric(year)) |> 
   bind_rows(pov_direct) |> 
@@ -415,11 +435,14 @@ pov_plots <-
 
 ```{r}
 library(modelsummary)
+library(flextable)
 datasummary(
-  year ~ ( 
-    weighted.mean * Arguments(w = direct_N_pop ) + SD) * (estimate) * pov,
-  data = pov_dta |> mutate(year = as.factor(year)) |>
-    filter(str_detect(estimate, "Direct|9|6")),
+  year ~ (weighted.mean * Arguments(w = direct_N_pop) + SD) * (estimate) * pov,
+  data = 
+    pov_dta |>
+    mutate(year = as.factor(year)) |>
+    filter(str_detect(estimate, "Direct|9|6|MF")) |> 
+    rename(SD2 = SD),
   fmt = 4
 )
 ```
@@ -452,21 +475,31 @@ pov_plots |>
 
 ```{r}
 pov_maps |>
-  filter(str_detect(estimate2, "9|6")) |>
+  filter(str_detect(estimate2, "9|6|MF")) |>
   arrange(estimate2) |> 
-  # filter(year2 %in% c(2022, 2023)) |>
+  filter(year2 %in% c(2019, 2021, 2023)) |>
   pull(plot_poverty) |>
   reduce(~ .x + .y)  +
-  patchwork::plot_layout(guides = "collect", nrow = 2) 
+  patchwork::plot_layout(guides = "collect", nrow = 3) 
+```
+
+### Poverty scatter
+
+```{r}
+pov_plots |>
+  # filter(year2 %in% c(2019, 2023)) |>
+  pull(plot_povcompare) |>
+  reduce(~ .x + .y)  +
+  patchwork::plot_layout(guides = "collect") 
 ```
 
 # CV map
 
 ```{r}
 pov_maps |>
-  filter(str_detect(estimate2, "Dir|9|6")) |>
+  filter(str_detect(estimate2, "Dir|9|6|MF")) |>
   arrange(estimate2) |> 
-  # filter(year2 %in% c(2022, 2023)) |>
+  filter(year2 %in% c(2022, 2023)) |>
   pull(plot_CV) |>
   reduce(~ .x + .y)  +
   patchwork::plot_layout(guides = "collect", nrow = 3) 
@@ -475,9 +508,10 @@ pov_maps |>
 # Direct vs Model-based CV
 
 ```{r}
-pov_dta_full |> 
+library(glue)
+pov_dta |> 
   st_drop_geometry() |>
-  group_by(year) |> 
+  group_by(year2 = year) |> 
   nest() |> 
   mutate(
     plot = map(data, ~{
