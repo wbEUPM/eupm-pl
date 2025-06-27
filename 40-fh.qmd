@@ -42,8 +42,12 @@ pacman::p_load(
   patchwork,
   tictoc,
   tidyverse,
-  flextable
+  flextable,
+  conflicted
 )
+
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
 
 # Loading locally-developed
 list.files("R", pattern="*.R$", full.names=TRUE, ignore.case=TRUE) |> 
