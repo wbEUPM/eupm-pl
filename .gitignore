@@ -16,3 +16,5 @@ data/
 /reports/*_files/
 /output
 /reports
+*_files/*
+*.html
