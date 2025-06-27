@@ -5,7 +5,7 @@ format: html
 editor: source
 bibliography: references.bib
 editor_options: 
-  chunk_output_type: inline
+  chunk_output_type: console
 ---
 
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
@@ -221,6 +221,8 @@ dta_ufh <-
   select(-where(~any(is.na(.))))
 
 candidate_vars <- dta_ufh |> select(contains("x")) |> names()
+candidate_vars <- 
+  c("x4", "x5", "x11", "x29", "x31", "x38")
 
 fh_step <- step_wrapper_fh(dt = dta_ufh,
                            xvars = candidate_vars,
@@ -230,7 +232,6 @@ fh_step <- step_wrapper_fh(dt = dta_ufh,
                            vardir = "vardir", 
                            transformation = "arcsin", 
                            eff_smpsize = "n_eff")
-
 ```
 
 ```{r remove_multicol1, message = FALSE, warning = FALSE}
@@ -244,16 +245,16 @@ In this example, we use the function `fh` to calculate the FH estimates. Because
 
 ```{r model_est, message = FALSE, warning = FALSE}
 set.seed(123)
-fh_model <- fh(fixed = formula(fh_step$fixed),
+fh_model_2 <- fh(fixed = formula(fh_step$fixed),
                vardir = "vardir", 
                combined_data = as.data.frame(dta_ufh), 
                domains = "id",
-               method = "ml", 
+               method = "reml", 
                transformation = "arcsin", 
                backtransformation = "bc",
                eff_smpsize = "n_eff", 
                MSE = TRUE, 
-              mse_type = "boot", B = c(200, 0)) 
+              mse_type = "boot", B = c(50, 0)) 
 
 bd_out |> pin_write(fh_model, type = "rds")
 
