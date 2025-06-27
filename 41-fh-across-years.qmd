@@ -1,4 +1,27 @@
-## Libraries and file paths
+---
+title: "The Univariate Fay-Herriot (UFH) model"
+author: "Sylvia Harmening"
+format: html
+editor: visual
+bibliography: references.bib
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE, error =  FALSE}
+#| label: setup
+#| echo: true
+#| warning: false
+#| message: false
+#| error: false
+
+# Chunk setup
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE
+)
 
 pacman::p_load(
   sf, 
@@ -28,9 +51,14 @@ bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
 bd_out <- "output/res-40-fh" |> board_folder(versioned = T)
 
+```
+
+## Loading data
+
+```{r dta-load}
+#| echo: TRUE
 
 # Data loading -------------------------------------------------------------
-
 
 ## Variable names ---------------------------------------------------------
 area_var <- c("id") 
@@ -62,13 +90,23 @@ rhs_dta1 <-
   ungroup() |> 
   select(-x15)
 
-# UFH in a loop ---------------------------------------------------------------
-pov_fh <- tibble()
+```
 
+
+## UFH across years, dependent variabels, optimization methods and criterias
+
+Run manually and save results, please.
+
+```{r est-mfh}
+#| eval: false
+
+# UFH in a loop ---------------------------------------------------------------
 for (method in c("reml", "ml")) {
 for (criteria in c("AIC", "BIC")) {
 for (type_poverty in unique(pov_direct$type)) {
 for (i in as.character(year_set)){
+  
+  try({
   survey_dt_tmp <- pov_direct |> filter(year == i, type == type_poverty)
   rhs_dt_tmp <- rhs_dta1  |> filter(year == as.character(as.numeric(i)))
   
@@ -108,18 +146,39 @@ for (i in as.character(year_set)){
     name = paste0("fh_model__", type_poverty, "__", criteria, "__", i),
     type = "rds"
   )
+  }, silent = TRUE)
+}
+}
+}
+}
+
+# Saving UFH results in a table --------------------------------------------------------------
+pov_fh <- tibble()
+
+for (method in c("reml", "ml")) {
+for (criteria in c("AIC", "BIC")) {
+for (type_poverty in unique(pov_direct$type)) {
+for (i in as.character(year_set)){
+  
+  try({
+    
+  fh_model <- bd_aux |>
+    pin_read(name = paste0("fh_model__", type_poverty, "__", criteria, "__", i))
   
   # Save results
-  # pov_fh_tmp <- 
-    as_tibble(estimators(fh_model, MSE = TRUE, CV = TRUE)) |> 
-    select(!!area_var := Domain, pov = FH, MSE = FH_MSE, CV = FH_CV) |>
+  pov_fh_tmp <-
+    as_tibble(estimators(fh_model, MSE = TRUE, CV = TRUE)) |>
+    select(!!area_var := Domain,
+           pov = FH,
+           MSE = FH_MSE,
+           CV = FH_CV) |>
     mutate(
       year = i,
       estimate = "UFH",
       type = type_poverty,
       criteria = criteria,
       method = method,
-      re = fh_model$model$random_effects[,1],
+      re = fh_model$model$random_effects[, 1],
       n_var = length(coef(fh_model)) - 1,
       r2_adj = fh_model$model$model_select$AdjR2,
       r2_fh = fh_model$model$model_select$FH_R2
@@ -127,67 +186,27 @@ for (i in as.character(year_set)){
   
   pov_fh <- bind_rows(pov_fh, pov_fh_tmp)
   
-}
-}
-}
-}
+  
+  }, silent = TRUE)
+}}}}
+
 
 bd_clean |>
   pin_write(x = pov_fh,
             name = "pov_fh_multipleyears",
             type = "rds")
+```
 
+## UFH Diagnostics
 
-# Selected Diagnosis ------------------------------------------------------
-
-
+```{r}
 #### Post estimation analysis
-fh_model_2019 <- bd_out |> pin_read("fh_model__arop__2019")
-fh_model_2020 <- bd_out |> pin_read("fh_model__arop__2020")
-fh_model_2021 <- bd_out |> pin_read("fh_model__arop__2021")
-fh_model_2022 <- bd_out |> pin_read("fh_model__arop__2022")
-fh_model_2023 <- bd_out |> pin_read("fh_model__arop__2023")
+fh_model_2019 <- bd_aux |> pin_read("fh_model__arop__AIC__2019")
 
-for (i in singleyears){
-  pdf(paste0("Plots-", i ,".pdf"))
- # summary(eval(parse(text = paste0("fh_model_",i))))
-  plot(eval(parse(text = paste0("fh_model_",i))))
- # compare_plot(val(parse(text = paste0("fh_model_",i))), MSE = TRUE, CV = TRUE)
- # compare(eval(paste0("fh_model_",i)))
-  dev.off()
-}
-
-for (i in singleyears){
-  pdf(paste0("Compare-plots-", i ,".pdf"))
-  # summary(eval(parse(text = paste0("fh_model_",i))))
-  #plot(eval(parse(text = paste0("fh_model_",i))))
-   compare_plot(eval(parse(text = paste0("fh_model_",i))), MSE = TRUE, CV = TRUE)
-  # compare(eval(paste0("fh_model_",i)))
-  dev.off()
-}
-
-
+fh_model_2019
 summary(fh_model_2019)
-plot(fh_model_2019)
-compare_plot(fh_model_2019, MSE = TRUE, CV = TRUE)
 compare(fh_model_2019)
+compare_plot(fh_model_2019, MSE = TRUE, CV = TRUE)
 
-summary(fh_model_2020)
-plot(fh_model_2020)
-compare_plot(fh_model_2020, MSE = TRUE, CV = TRUE)
-compare(fh_model_2020)
+```
 
-summary(fh_model_2021)
-plot(fh_model_2021)
-compare_plot(fh_model_2021, MSE = TRUE, CV = TRUE)
-compare(fh_model_2021)
-
-summary(fh_model_2022)
-plot(fh_model_2022)
-compare_plot(fh_model_2022, MSE = TRUE, CV = TRUE)
-compare(fh_model_2022)
-
-summary(fh_model_2023)
-plot(fh_model_2023)
-compare_plot(fh_model_2023, MSE = TRUE, CV = TRUE)
-compare(fh_model_2023)

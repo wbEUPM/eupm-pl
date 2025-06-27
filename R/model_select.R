@@ -14,7 +14,8 @@
 #' @importFrom emdi step fh
 
 step_wrapper_fh <- function(dt, xvars, y, cor_thresh = 0.95, criteria = "AIC",
-                         vardir, transformation = "no", eff_smpsize) {
+                         vardir, transformation = "no", eff_smpsize,
+                         method = "reml", ...) {
   
   dt <- as.data.table(dt)
   
@@ -71,7 +72,7 @@ step_wrapper_fh <- function(dt, xvars, y, cor_thresh = 0.95, criteria = "AIC",
     fixed = model_formula,
     vardir = vardir,
     combined_data = dt,
-    method = "ml",
+    method = method,
     MSE = FALSE
   )
   

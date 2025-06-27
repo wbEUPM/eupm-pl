@@ -296,8 +296,7 @@ pov_dta_full |>
              ) + 
   facet_wrap(type ~ var, scales = "free") + 
   scale_x_continuous() +
-  geom_boxplot(aes(colour = estimate)) + 
-  geom_hline(yintercept = 0.2)
+  geom_boxplot(aes(colour = estimate))
 ```
 
 
