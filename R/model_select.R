@@ -15,7 +15,7 @@
 
 step_wrapper_fh <- function(dt, xvars, y, cor_thresh = 0.95, criteria = "AIC",
                          vardir, transformation = "no", eff_smpsize,
-                         method = "reml", ...) {
+                         method = "ml", ...) {
   
   dt <- as.data.table(dt)
   

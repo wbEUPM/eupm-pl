@@ -41,7 +41,8 @@ pacman::p_load(
   scales, 
   patchwork,
   tictoc,
-  tidyverse
+  tidyverse,
+  flextable
 )
 
 # Loading locally-developed
