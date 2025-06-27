@@ -165,7 +165,7 @@ for (i in as.character(year_set)){
   try({
     
   fh_model <- bd_aux |>
-    pin_read(name = paste0("fh_model__", type_poverty, "__", criteria, "__", transformation, "__", i))
+    pin_read(name = paste0("fh_model__", type_poverty, "__", criteria, "__", method, "__", i))
   
   # Save results
   pov_fh_tmp <-
