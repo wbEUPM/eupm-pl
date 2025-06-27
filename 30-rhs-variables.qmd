@@ -284,11 +284,12 @@ dta_cor <-
   correlation::correlation() |>
   as_tibble() |>
   filter(Parameter1 == "pov") |>
+  mutate(r_abs = abs(r)) |>
+  arrange(Group, desc(r_abs)) |>
   mutate(Parameter2 = as_factor(Parameter2) |> fct_reorder(abs(r), .desc = T)) |>
   mutate(stats = str_c(number(r, 0.001), "", stars.pval(p))) |>
   select(Group, Variable = Parameter2, stats) |>
-  pivot_wider(names_from = Group, values_from = stats) |>
-  arrange(Variable)
+  pivot_wider(names_from = Group, values_from = stats)
 
 dta_cor |>
   flextable() |>
