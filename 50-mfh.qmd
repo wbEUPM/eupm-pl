@@ -30,31 +30,25 @@ knitr::opts_chunk$set(
 pacman::p_load(
   sf, 
   data.table, 
-  car, 
   msae,
   sae, 
-  survey, 
-  spdep,
-  knitr, 
-  MASS, 
-  caret,
-  purrr,
+  # MASS, 
+  # caret,
+  # purrr,
   pins,
-  gt,
-  lmtest, 
-  scales,
-  viridis, 
+  scales, 
   patchwork,
-  dplyr, 
   tictoc,
-  gt,
-  matrixcalc,
-  tidyverse,
   modelsummary,
   flextable,
   correlation,
-  datawizard
-  )
+  datawizard,
+  tidyverse,
+  conflicted
+)
+
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
 
 # Loading locally-developed
 list.files("R", pattern = "*.R$", full.names = TRUE, ignore.case = TRUE) |>
@@ -193,7 +187,7 @@ pov_covar <-
       as_tibble()
   })() |> 
   mutate(across(starts_with("cov"), ~ifelse(is.na(.), 0, .))) |> 
-  select(-variable) |> 
+  dplyr::select(-variable) |> 
   arrange(id, vcov_type)
 ```
 
@@ -265,10 +259,8 @@ rhs_dta_log <-
   mutate(value = ifelse(name %in% var_to_log, log(value), value)) |>
   # filter(is.nan(value))
   ungroup() |> 
-  pivot_wider(names_from = name, values_from = value) |> 
-  select(-x31)
+  pivot_wider(names_from = name, values_from = value) 
 ```
-
 
 ### Variable Selection
 
@@ -276,14 +268,12 @@ Next, we apply a simple variable selection process which employs the stepwise re
 
 ```{r var-selection}
 #| echo: false
-
 dta_full <-
   rhs_dta_log |> 
-  mutate(year = year + 1) |> 
-  left_join(pov_direct |> filter(type == "arop") |> 
-              select(all_of(c(area_var, year_var, directpov, directvar)))) |> 
-  filter(!is.na(pov)) |> 
-  select(-where(~any(is.na(.))))
+  left_join(pov_direct |> dplyr::filter(type == "arop") |> 
+              dplyr::select(all_of(c(area_var, year_var, directpov, directvar)))) |> 
+  dplyr::filter(!is.na(pov)) |> 
+  dplyr::select(-where(~any(is.na(.))))
 
 dta_full_wide <- 
   dta_full |> 
@@ -291,7 +281,7 @@ dta_full_wide <-
     names_from = year, 
     values_from = c(contains("x"), all_of(c(directpov, directvar))), 
     names_sep = "_") |> 
-  select(id, contains(directpov), contains(directvar), everything())
+  dplyr::select(id, contains(directpov), contains(directvar), everything())
 
 candidate_vars <- dta_full |> select(contains("x")) |> names()
 
@@ -311,10 +301,6 @@ fh_step <-
     out <- names(model_obj$coefficients)
     out[!str_detect(out, "Intercept")]
   }) 
-# |> 
-#   map(~{
-#     .x[1:(min(2, length(.x)))]
-#   })
 
 
 # Set of formulas for the Multivariate FH
@@ -338,15 +324,13 @@ model_pooled <-
     trace = 0
   ) ### using log(n) to force BIC selection
 
-coef_pooled <- names(model_pooled$coefficients)
-coef_pooled <- coef_pooled[!str_detect(coef_pooled, "Intercept")]
-form_pooled <- c(directpov,  " ~ ", str_c(coef_pooled, collapse = " + ")) |> str_c(collapse = "") |> 
-  as.formula()
+form_pooled <- formula(model_pooled)
 ```
+
+### Checking regression results for selected variables
 
 ```{r tbl-varsel-mfh-1}
 #| tbl-cap: Multiple linear regressions on slected variables
-### here is what the 3 equations look like
 mfh_formula |> 
   map(~lm(.x, data = dta_full_wide)) |> 
   modelsummary(
@@ -401,105 +385,104 @@ Notes: Significance levels are: `***` p-value \< 0.001, `***` p-value \< 0.01, `
 
 ## Step 3: Fitting the Multivariate Fay Herriot Model
 
+First, we develop functions that allow estimating MFH models
+
 ```{r fn-run-eblups}
-# Run eblup estimates for UVFH and MVFH
-est_ufh_mfh1 <- 
+#| echo: true
+
+# Function for estimating 
+est_ufh_mfh <-
   function(dta,
            formula,
            iter = 500,
            precision = 0.0001,
            verbose = FALSE) {
+    var_cols <- dta |> select(contains("vardir"), contains("cov")) |> names()
+    print(formula)
     
-  var_cols <- dta |> select(contains("vardir"), contains("cov")) |> names()
-  print(formula)
-  cat("eblupUFH --- \n")
-  tic(msg = "eblupUFH")
-  model0_obj <- try({
-    eblupUFH(
-      formula = formula,
-      vardir = var_cols,
-      data = dta,
-      MAXITER = iter,
-      PRECISION = precision
-    )
-  }, silent = T
-  )
-  toc()
-  
-  cat("eblupMFH1 --- \n")
-  tic(msg = "eblupMFH1")
-  if (verbose) {
-    model1_obj <- try({
-      eblupMFH1_v2(
+    cat("eblupUFH --- \n")
+    tic(msg = "eblupUFH")
+    model0_obj <- try({
+      eblupUFH(
         formula = formula,
         vardir = var_cols,
         data = dta,
         MAXITER = iter,
         PRECISION = precision
       )
-    }, silent = T
-    )
-  } else {
-    model_obj <- try({
-      eblupMFH1(
-        formula = formula,
-        vardir = var_cols,
-        data = dta,
-        MAXITER = iter,
-        PRECISION = precision
-      )
-    }, silent = T
-    )
+    }, silent = T)
+    toc()
+    
+    cat("eblupMFH1 --- \n")
+    tic(msg = "eblupMFH1")
+    if (verbose) {
+      model1_obj <- try({
+        eblupMFH1_v2(
+          formula = formula,
+          vardir = var_cols,
+          data = dta,
+          MAXITER = iter,
+          PRECISION = precision
+        )
+      }, silent = T)
+    } else {
+      model_obj <- try({
+        eblupMFH1(
+          formula = formula,
+          vardir = var_cols,
+          data = dta,
+          MAXITER = iter,
+          PRECISION = precision
+        )
+      }, silent = T)
+    }
+    toc()
+    
+    cat("eblupMFH2 --- \n")
+    tic(msg = "eblupMFH2")
+    if (verbose) {
+      model2_obj <- try({
+        eblupMFH2_v2(
+          formula = formula,
+          vardir = var_cols,
+          data = dta,
+          MAXITER = iter,
+          PRECISION = precision
+        )
+      }, silent = T)
+    } else {
+      model2_obj <- try({
+        eblupMFH2(
+          formula = formula,
+          vardir = var_cols,
+          data = dta,
+          MAXITER = iter,
+          PRECISION = precision
+        )
+      }, silent = T)
+    }
+    toc()
+    
+    # Results
+    tibble(
+      model = c("UFH", "MFH1", "MFH2"),
+      eblups = list(model0_obj, model1_obj, model2_obj)
+    ) |>
+      mutate(results = map(eblups, ~ {
+        if (!"try-error" %in% class(.x)) {
+          out <- ext_mfh_dta(.x,
+                             select(dta, id),
+                             type = "arop",
+                             estimate = "UFH (MFH)")
+        } else {
+          out <- tibble()
+        }
+      }))
   }
-  toc()
-  
-  
-  cat("eblupMFH2 --- \n")
-  tic(msg = "eblupMFH2")
-  if (verbose) {
-    model2_obj <- try({
-      eblupMFH2_v2(
-        formula = formula,
-        vardir = var_cols,
-        data = dta,
-        MAXITER = iter,
-        PRECISION = precision
-      )
-    }, silent = T
-    )
-  } else {
-    model2_obj <- try({
-      eblupMFH2(
-        formula = formula,
-        vardir = var_cols,
-        data = dta,
-        MAXITER = iter,
-        PRECISION = precision
-      )
-    }, silent = T
-    )
-  }
-  toc()
-  
-  # Results 
-  tibble(model = c("UFH", "MFH1", "MFH2"),
-         eblups = list(model0_obj, model1_obj, model2_obj)
-         ) |> 
-    mutate(results = map(eblups, ~{
-      if (!"try-error" %in% class(.x)) {
-        out <- ext_mfh_dta(.x,
-                           select(dta_mhf, id),
-                           type = "arop",
-                           estimate = "UFH (MFH)")
-      } else {
-        out <- tibble()
-      }
-    }))
-}
 
 # Extract EBLUP statistics
 ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
-  # ids <- mfh_dt |> select(id)
+  
   eblup_dt <- fit$eblup |> as_tibble()
   
   mse_dt <- fit$MSE |> as_tibble() |> rename_with( ~ str_replace(., "pov", "vardir"))
@@ -527,28 +510,34 @@ ext_mfh_dta <- function(fit, ids, type = "arop", estimate = "UFH") {
 
 As a starting point, we run UFH and MFH1 (only 1) with the zero covariance between years.
 
-```{r mvfh-zero-cov-est, eval=FALSE}
+```{r}
 dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
 dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
+```
 
+```{r mvfh-zero-cov-est, eval=FALSE}
 eblup_zero_cov <-
   dta_mhf |> mutate(across(contains("cov"), ~ 0)) |> 
-  est_ufh_mfh1(dta = _, formula = mfh_formula, verbose = T) |>
+  est_ufh_mfh(dta = _, formula = mfh_formula, verbose = T) |>
   mutate(model = str_c(model, " (0 cov)"))
 
 bd_out |> pin_write(eblup_zero_cov, type = "rds")
+```
 
+Next, we estimate MVFH with variances constant for all regions.
+
+```{r mvfh-constant-cov-est, eval=FALSE}
 eblup_const_cov <-
   dta_mhf |> 
   mutate(
-    across(contains("cov"), ~ . / 3),
+    across(contains("cov"), ~ . / 4),
     across(all_of(c(
       #"cov2019_2020", "cov2020_2021", "cov2021_2022", "cov2022_2023",
       "cov2019_2021", "cov2019_2022", "cov2019_2023",
        "cov2020_2022", "cov2020_2023", "cov2021_2023"
       )), ~ 0)
     ) |> 
-  est_ufh_mfh1(dta = _, formula = mfh_formula, verbose = T, precision = 0.001) |>
+  est_ufh_mfh(dta = _, formula = mfh_formula, verbose = T, precision = 0.001) |>
   mutate(model = str_c(model, " (const. cov. 1y)"))
 
 bd_out |> pin_write(eblup_const_cov, type = "rds")
@@ -557,11 +546,7 @@ bd_out |> pin_write(eblup_const_cov, type = "rds")
 ### MFH with a constant temporal variance across regiona
 
 ```{r mfh-two-years-pairs, eval=FALSE}
-dta_cov <- pov_covar |> filter(vcov_type == "paired") |> select(-vcov_type, -type)
-dta_mhf <- dta_full_wide |> left_join(dta_cov, by = join_by(id))
-
 # one_comb <- c(2020, 2021)
-
 est_mfh_pair <- function(one_comb) {
   
   mfh_formula_local <- mfh_formula[names(mfh_formula) %in% one_comb]
@@ -632,7 +617,7 @@ eblup_pairs_2y <-
                out <- ext_mfh_dta(.x,
                                   select(dta_mhf, id),
                                   type = "arop",
-                                  estimate = "UFH (MFH)")
+                                  estimate = "MFH paired")
              } else {
                out <- tibble()
              }
@@ -642,24 +627,39 @@ eblup_pairs_2y <-
 bd_out |> pin_write(eblup_pairs_2y, type = "rds")
 ```
 
-
 Saving results of the models
+
+```{r}
+
+mod_dta_out <-
+  bd_out |> pin_read("eblup_const_cov") |> 
+  bind_rows(bd_out |> pin_read("eblup_zero_cov")) |> 
+  bind_rows(bd_out |> pin_read("eblup_pairs_2y")) |>
+  mutate(model = ifelse(is.na(estimate), model, estimate)) |> 
+  select(-estimate) |> 
+  unnest(results) |> 
+  mutate(estimate = model) 
+
+bd_clean |> pin_write(mod_dta_out, name = "pov_mfh", type = "rds")
+```
+
 
 ```{r res-save}
 # model0_obj
-mod_dta <-
-  bd_out |> pin_read("eblup_const_cov") |> 
-  bind_rows(bd_out |> pin_read("eblup_zero_cov")) |> 
-  bind_rows(bd_out |> pin_read("eblup_pairs_2y") |> rename(est2 = estimate)) |>
-  unnest(results) |>
-  mutate(
-    estimate = ifelse(is.na(est2), model, est2)
-  ) |> 
-  bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
-  # select(-eblups, -est2, -model) |> 
-  filter(str_detect(estimate, "Direct|MFH|UFH.{1,2}0"),
-         year > 2012) |> 
-  mutate(estimate = as_factor(estimate))
+# mod_dta <-
+#   bd_out |> pin_read("eblup_const_cov") |> 
+#   bind_rows(bd_out |> pin_read("eblup_zero_cov")) |> 
+#   bind_rows(bd_out |> pin_read("eblup_pairs_2y") |> rename(est2 = estimate)) |>
+#   unnest(results) |>
+#   mutate(
+#     estimate = ifelse(is.na(est2), model, est2)
+#   ) |> 
+#   bind_rows(pov_direct |> mutate(estimate = "Direct")) |> 
+#   # select(-eblups, -est2, -model) |> 
+#   filter(str_detect(estimate, "Direct|MFH|UFH.{1,2}0"),
+#          year > 2012) |> 
+#   mutate(estimate = as_factor(estimate))
+
 ```
 
 ## Step 4: Post Estimation Diagnostics: Model Assumption Checks for Linearity, Normality and Outliers

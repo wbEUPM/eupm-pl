@@ -26,6 +26,7 @@ if ("try-error" %in% class(try(params$eval_all)))
 # Libraries
 pacman::p_load(
   # biscale,
+  convey,
   readxl,
   flextable, ftExtra, 
   knitr,
@@ -540,7 +541,28 @@ dta4_direct <-
   mutate(n_eff = N / deff)
 ```
 
-Resulting data set has teh following structure:
+### Mean and median income
+
+```{r}
+dta5_inc <-
+  survey::svyby(
+    formula = inc_adeq,
+    by = check_null(c(area_var, year_var)),
+    design = dta4_design_11,
+    FUN = survey::svymean
+  ) |>
+  as_tibble()
+
+```
+
+### Poverty gap
+
+```{r}
+svyby( ~ ftotval , ~ sex , cps_family_design , svyrmpg)
+```
+
+
+Resulting data set has the following structure:
 
 ```{r}
 # dta4_direct |> glimpse()

@@ -39,8 +39,13 @@ pacman::p_load(
   scales, 
   patchwork, 
   biscale,
-  modelsummary
+  modelsummary,
+  conflicted
 )
+
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::first)
 
 # Chunk setup
 knitr::opts_chunk$set(
@@ -65,7 +70,7 @@ bd_aux <- root_temp |> board_folder(versioned = T)
 bd_clean <- root_clean |> board_folder(versioned = T)
 
 # Years range
-range <- c(2019:2030)
+year_range <- c(2019:2030)
 focus_type <- "arop"
 ```
 
@@ -89,14 +94,16 @@ pov_fh <- bd_clean |> pin_read("pov_fh_multipleyears") |>
 
 # MFH 0 cov: 
 pov_mvfh <- 
-  board_folder('output/res-50-mfh') |> pin_read("eblup_zero_cov") |> 
-  # bind_rows(
-  #   board_folder('output/res-50-mfh') |> pin_read("eblup_const_cov")
-  # ) |> 
-  filter(model %in% c("MFH2 (0 cov)", "MFH2 (const. cov. 1y)")) |>
-  unnest(results) |> 
-  mutate(estimate = model) |> 
-  select(id, year, type, estimate, pov, MSE = vardir, RMSE = SD, CV)
+  bd_clean |> pin_read("pov_mfh") |> 
+  filter(estimate %in% c("MFH2 (0 cov)", "MFH2 (const. cov. 1y)")) 
+  # board_folder('output/res-50-mfh') |> pin_read("eblup_zero_cov") |> 
+  # # bind_rows(
+  # #   board_folder('output/res-50-mfh') |> pin_read("eblup_const_cov")
+  # # ) |> 
+  # filter(model %in% c("MFH2 (0 cov)", "MFH2 (const. cov. 1y)")) |>
+  # unnest(results) |> 
+  # mutate(estimate = model) |> 
+  # select(id, year, type, estimate, pov, MSE = vardir, RMSE = SD, CV)
 
 pov_dta <- 
   pov_direct |> bind_rows(pov_fh) |> bind_rows(pov_mvfh) |> 
@@ -108,10 +115,15 @@ pov_dta <-
 # pov_dta |> count(estimate, type)
 
 # Combining data with geometries and filtering relevant poverty measures and years
-pov_dta_full <- geom_nuts3 |>
+pov_dta_full <- 
+  geom_nuts3 |>
   left_join(pov_dta, by = join_by(id)) |>
   as_tibble() |> st_as_sf() |> 
-  filter(type == focus_type, year %in% range)
+  filter(type == focus_type, year %in% year_range,
+         is.na(criteria) | criteria %in% "AIC",
+         is.na(method) | method %in% "reml"
+         )
+pov_dta_full |> st_drop_geometry() |> count(estimate)
 ```
 
 ## Poverty maps
@@ -176,15 +188,37 @@ pov_plots <-
            ))
 ```
 
-## Poverty
+## Poverty UHF
 
 ```{r}
 # plt1 <-
 pov_maps |>
-  filter(year2 %in% c(2019, 2023)) |>
+  filter(estimate2 %in% c("Direct", "UFH")) |> 
+  filter(year2 %in% c(2019)) |>
   pull(plot_poverty) |>
   reduce(~ .x + .y)  +
   patchwork::plot_layout(guides = "collect") 
+```
+
+
+```{r}
+
+pov_maps |>
+  filter(estimate2 %in% c("Direct", "UFH")) |> 
+  unnest(data) |> 
+  filter(estimate2 == "UFH") |> 
+  ungroup() |> 
+  group_by(year, estimate2) |> 
+  filter(row_number() == 1) |> 
+  distinct(year, estimate2, CV, N, criteria, method, n_var, r2_adj, r2_fh)
+
+
+fh_model_2019 <- bd_aux |> pin_read("fh_model__arop__AIC__reml__2019")
+fh_model_2019
+summary(fh_model_2019)
+compare(fh_model_2019)
+compare_plot(fh_model_2019, MSE = TRUE, CV = TRUE)
+
 ```
 
 
